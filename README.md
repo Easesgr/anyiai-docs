@@ -1,4 +1,4 @@
-<p align="center"> <img width="220" alt="Anyi Ai Learn Logo" src="https://github.com/user-attachments/assets/927b5b93-052b-4eb8-9eb1-75c58f6ee4f0" /> </p>
+<p align="center"> <img width="320" alt="Anyi Ai Learn Logo" src="https://github.com/user-attachments/assets/927b5b93-052b-4eb8-9eb1-75c58f6ee4f0" /> </p>
 
 <h1 align="center">Anyi Ai Learn</h1>
 
@@ -54,53 +54,6 @@ MCP 协议、Agentic RAG、GraphRAG、上下文工程等前沿技术。
 
 API 平台、模型平台、向量数据库、Agent 框架等工具与资源。
 
-## 技术栈
-
-- **框架**：VuePress 2
-- **主题**：vuepress-theme-hope
-- **包管理**：pnpm
-- **部署**：GitHub Actions → GitHub Pages
-
-## 本地开发
-
-```bash
-# 安装依赖
-pnpm install
-
-# 启动开发服务器
-pnpm docs:dev
-
-# 构建生产版本
-pnpm docs:build
-
-# 清除缓存后启动
-pnpm docs:clean-dev
-```
-
-## 项目结构
-
-```
-anyi-docs/
-├── src/
-│   ├── .vuepress/
-│   │   ├── config.ts          # VuePress 配置
-│   │   ├── theme.ts           # 主题配置
-│   │   ├── navbar/            # 导航栏配置
-│   │   ├── sidebar/           # 侧边栏配置
-│   │   ├── styles/            # 自定义样式
-│   │   ├── components/        # 自定义组件
-│   │   ├── readmore.config.ts # 阅读锁定配置
-│   │   └── public/            # 静态资源
-│   ├── fundamentals/          # AI 基础
-│   ├── interview/             # AI 面试指南
-│   ├── ai-app/                # AI 应用开发
-│   ├── frontier/              # 前沿专题
-│   ├── resources/             # 资源导航
-│   └── about/                 # 关于
-├── package.json
-└── README.md
-```
-
 ## 内容风格
 
 - **说人话**：不堆公式，不拽术语，用大白话讲清楚原理
@@ -113,6 +66,7 @@ anyi-docs/
 扫描下方二维码关注微信公众号 **安逸Ai**，获取更多 AI 学习资料和更新通知。
 
 <p align="center"> <img width="220" alt="安逸Ai公众号二维码" src="https://github.com/user-attachments/assets/4c634d49-8c12-4593-9751-020ba3b4400b" /> </p>
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request。
