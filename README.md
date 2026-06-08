@@ -1,6 +1,5 @@
 <p align="center"> <img width="320" alt="Anyi Ai Learn Logo" src="https://github.com/user-attachments/assets/927b5b93-052b-4eb8-9eb1-75c58f6ee4f0" /> </p>
 
-<h1 align="center">Anyi Ai </h1>
 
 <p align="center">一个专注于 AI 领域的学习导航站，旨在帮助开发者系统性地掌握 AI 技术栈</p>
 
