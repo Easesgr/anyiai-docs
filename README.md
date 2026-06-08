@@ -6,7 +6,6 @@
 <p align="center">
   <a href="https://www.anyiai.cc">🌐 在线访问</a> ·
   <a href="#内容板块">📚 内容板块</a> ·
-  <a href="#本地开发">💻 本地开发</a> ·
   <a href="#关注公众号">📱 关注公众号</a>
 </p>
 
