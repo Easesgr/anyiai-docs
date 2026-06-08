@@ -1,6 +1,4 @@
-<p align="center">
-<img width="1448" height="1086" alt="logo" src="https://github.com/user-attachments/assets/927b5b93-052b-4eb8-9eb1-75c58f6ee4f0" />
-</p>
+<p align="center"> <img width="220" alt="Anyi Ai Learn Logo" src="https://github.com/user-attachments/assets/927b5b93-052b-4eb8-9eb1-75c58f6ee4f0" /> </p>
 
 <h1 align="center">Anyi Ai Learn</h1>
 
@@ -114,8 +112,7 @@ anyi-docs/
 
 扫描下方二维码关注微信公众号 **安逸Ai**，获取更多 AI 学习资料和更新通知。
 
-<img width="1280" height="1280" alt="qrcode_for_gh_ffeb6e481fc7_1280" src="https://github.com/user-attachments/assets/4c634d49-8c12-4593-9751-020ba3b4400b" />
-
+<p align="center"> <img width="220" alt="安逸Ai公众号二维码" src="https://github.com/user-attachments/assets/4c634d49-8c12-4593-9751-020ba3b4400b" /> </p>
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request。
