@@ -1,0 +1,1 @@
+var e=`/images/evaluation/evaluation_cover.png`;export{e as t};

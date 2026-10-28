@@ -1,0 +1,1 @@
+var e=`/images/app-system/app-system_cover.png`;export{e as t};

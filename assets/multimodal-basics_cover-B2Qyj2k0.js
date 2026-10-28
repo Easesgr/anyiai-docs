@@ -1,0 +1,1 @@
+var e=`/images/multimodal-basics/multimodal-basics_cover.png`;export{e as t};

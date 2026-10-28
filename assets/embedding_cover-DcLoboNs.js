@@ -1,0 +1,1 @@
+var e=`/images/embedding/embedding_cover.png`;export{e as t};

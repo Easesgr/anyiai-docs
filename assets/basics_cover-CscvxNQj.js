@@ -1,0 +1,1 @@
+var e=`/images/basics/basics_cover.png`;export{e as t};

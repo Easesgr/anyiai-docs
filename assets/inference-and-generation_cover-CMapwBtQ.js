@@ -1,0 +1,1 @@
+var e=`/images/inference-and-generation/inference-and-generation_cover.png`;export{e as t};

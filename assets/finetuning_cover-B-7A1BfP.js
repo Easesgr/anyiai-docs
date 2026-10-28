@@ -1,0 +1,1 @@
+var e=`/images/finetuning/finetuning_cover.png`;export{e as t};

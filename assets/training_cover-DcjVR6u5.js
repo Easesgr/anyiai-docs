@@ -1,0 +1,1 @@
+var e=`/images/training/training_cover.png`;export{e as t};

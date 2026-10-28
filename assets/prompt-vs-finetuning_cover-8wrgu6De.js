@@ -1,0 +1,1 @@
+var e=`/images/prompt-interview/prompt-vs-finetuning_cover.png`;export{e as t};

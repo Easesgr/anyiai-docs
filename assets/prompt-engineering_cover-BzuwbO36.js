@@ -1,0 +1,1 @@
+var e=`/images/prompt-engineering/prompt-engineering_cover.png`;export{e as t};
