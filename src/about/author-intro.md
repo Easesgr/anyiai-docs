@@ -1,0 +1,142 @@
+---
+title: 作者介绍
+icon: mdi:account-outline
+---
+
+# 关于我
+
+## 近况
+
+<div class="intro-card">
+  <div class="intro-card-icon">🎓</div>
+  <div class="intro-card-content">
+    <p>人工智能专业硕士在读，研究方向为图像修复与低层视觉。</p>
+    <p>近期从学术研究转向大模型应用工程实践，专注于 <strong>RAG</strong>、<strong>Agent</strong>、<strong>Prompt Engineering</strong> 等方向的落地探索。</p>
+  </div>
+</div>
+
+## 教育背景
+
+<div class="timeline">
+  <div class="timeline-item">
+    <div class="timeline-dot"></div>
+    <div class="timeline-content">
+      <div class="timeline-date">2024.09 - 至今</div>
+      <div class="timeline-title">云南大学（211）</div>
+      <div class="timeline-subtitle">人工智能 · 硕士</div>
+      <div class="timeline-desc">主修课程：最优化算法、人工智能导论、高级计算机网络、智能数据工程、软件开发方法与技术、工程数学等。</div>
+    </div>
+  </div>
+  <div class="timeline-item">
+    <div class="timeline-dot"></div>
+    <div class="timeline-content">
+      <div class="timeline-date">2020.09 - 2024.07</div>
+      <div class="timeline-title">江西水利电力大学</div>
+      <div class="timeline-subtitle">数据科学与大数据技术 · 本科</div>
+      <div class="timeline-desc">GPA 3.74/4.0，位列专业前 5%。主修课程：人工智能导论、机器学习、深度学习、自然语言处理、数据结构、算法设计与分析等。</div>
+    </div>
+  </div>
+</div>
+
+## 专业技能
+
+<div class="skill-tags">
+  <span class="skill-tag">Python</span>
+  <span class="skill-tag">Java</span>
+  <span class="skill-tag">Vue</span>
+  <span class="skill-tag">Spring Boot</span>
+  <span class="skill-tag">FastAPI</span>
+  <span class="skill-tag">MySQL</span>
+  <span class="skill-tag">Redis</span>
+  <span class="skill-tag">RAG</span>
+  <span class="skill-tag">MCP</span>
+  <span class="skill-tag">Agent</span>
+  <span class="skill-tag">CrewAI</span>
+  <span class="skill-tag">LangChain</span>
+  <span class="skill-tag">Claude Code</span>
+</div>
+
+- **RAG 与 MCP 应用开发**：熟悉文档解析、文本切分、向量化检索、重排序、上下文拼接和答案生成等核心链路，能基于 MCP Server/Client 封装本地工具和业务接口
+- **AI Agent 开发**：熟悉 CrewAI 框架，理解 ReAct、Tool Calling、记忆系统和多智能体编排机制
+- **AI 编程工具**：熟练使用 Claude Code、Trae、Opencode 等 AI 编程工具辅助开发
+
+## 项目经历
+
+<div class="timeline">
+  <div class="timeline-item">
+    <div class="timeline-dot"></div>
+    <div class="timeline-content">
+      <div class="timeline-date">2026.04 - 2026.05</div>
+      <div class="timeline-title">基于 CrewAI 的多 Agent 内容生成与视频创作平台</div>
+      <div class="timeline-subtitle">全栈开发</div>
+      <div class="timeline-desc">
+        基于 CrewAI 多 Agent 框架搭建端到端 AI 内容生产平台，覆盖选题调研、文章生成、封面设计、动态页面生成和短视频合成等流程。将内容生产的 5 个流程拆分为 32 个 Agent/Crew 和 17 个自定义工具，通过 YAML 配置实现 Agent 角色与任务的配置化管理。
+        <br><br>
+        <strong>技术栈：</strong>Python / CrewAI / Flask / Playwright / FFmpeg / Vue 3 / TypeScript
+      </div>
+    </div>
+  </div>
+  <div class="timeline-item">
+    <div class="timeline-dot"></div>
+    <div class="timeline-content">
+      <div class="timeline-date">2026.05 - 2026.06</div>
+      <div class="timeline-title">AI 面试 RAG 助手</div>
+      <div class="timeline-subtitle">后端开发</div>
+      <div class="timeline-desc">
+        构建 VuePress 知识库站点和 RAG 面试问答助手，实现内容结构化展示、智能检索、面试回答生成和来源追溯。设计"向量检索 + BM25 + RRF 融合 + Reranker 重排序"的混合检索链路，提升 AI 专有名词和面试题的召回准确性。
+        <br><br>
+        <strong>技术栈：</strong>VuePress / Python / FastAPI / LangChain / ChromaDB / BM25 / BGE-Reranker
+      </div>
+    </div>
+  </div>
+</div>
+
+## 这个站点
+
+<div class="intro-card">
+  <div class="intro-card-icon">💡</div>
+  <div class="intro-card-content">
+    <p>做这个站点的初衷很简单：把自己学到的东西整理清楚，顺便帮后来的人少走点弯路。</p>
+    <p>从机器学习入门，到深度学习实战，再到大模型应用开发——这条路走了好几年，踩过的坑不计其数。我想要的是一个普通人能看懂、有体系、能直接用的 AI 学习路径。找不到，那就自己做。</p>
+    <p>目前「AI 基础」板块已更新完毕，80+ 篇文章覆盖 10 大模块。其他板块正在陆续更新中。</p>
+  </div>
+</div>
+
+## 联系我
+
+<div class="contact-grid">
+  <a href="https://github.com/Easesgr" class="contact-card">
+    <div class="contact-icon">
+      <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+    </div>
+    <div class="contact-info">
+      <div class="contact-name">GitHub</div>
+      <div class="contact-detail">Easesgr</div>
+    </div>
+  </a>
+  <div class="contact-card">
+    <div class="contact-icon">
+      <svg viewBox="0 0 24 24" width="32" height="32" fill="#07c160"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-7.062-6.122zm-2.18 2.769c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982z"/></svg>
+    </div>
+    <div class="contact-info">
+      <div class="contact-name">微信公众号</div>
+      <div class="contact-detail">安逸Ai</div>
+    </div>
+  </div>
+</div>
+
+<div class="qrcode-card">
+  <svg class="qrcode-deco qrcode-deco-scan" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10V4h6M28 10V4h-6M4 22v6h6M28 22v6h-6"/></svg>
+  <svg class="qrcode-deco qrcode-deco-chat" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 18a10 10 0 1 1 5 8.7L5 28l1.3-4A10 10 0 0 1 5 18z"/><path d="M20 26a8 8 0 1 0-4-6.9L15 22l3-.8A8 8 0 0 0 20 26z"/></svg>
+  <svg class="qrcode-deco qrcode-deco-spark s1" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
+  <svg class="qrcode-deco qrcode-deco-spark s2" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
+  <svg class="qrcode-deco qrcode-deco-spark s3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
+  <svg class="qrcode-deco qrcode-deco-spark s4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
+
+  <div class="qrcode-wrap">
+    <img src="/images/wechat-qrcode.png" alt="安逸Ai 公众号" class="qrcode-img" />
+  </div>
+
+  <p class="qrcode-text">扫码关注 <em>「安逸Ai」</em> 公众号</p>
+  <p class="qrcode-text">获取更多 AI 学习资料和更新通知</p>
+</div>

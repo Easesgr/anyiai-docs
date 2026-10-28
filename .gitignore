@@ -1,0 +1,26 @@
+# Dependencies and generated site
+node_modules/
+src/.vuepress/.cache/
+src/.vuepress/.temp/
+src/.vuepress/dist/
+
+# Local exports, browser artifacts, and original artwork
+output/
+.firecrawl/
+.playwright-cli/
+navbar-test.png
+素材/
+
+# Local tools and operating system files
+.idea/
+.workbuddy/
+.claude/
+.DS_Store
+*.bak
+*.log
+
+# Credentials and private reading-code records
+.env
+.env.*
+!.env.example
+src/.vuepress/readmore-codes.txt

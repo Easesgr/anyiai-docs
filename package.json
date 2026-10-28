@@ -1,0 +1,30 @@
+{
+  "name": "anyi-docs",
+  "description": "Anyi Ai Docs",
+  "version": "2.0.0",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "docs:build": "vuepress-vite build src",
+    "docs:clean-dev": "vuepress-vite dev src --clean-cache",
+    "docs:dev": "vuepress-vite dev src",
+    "docs:pdf": "node scripts/export-pdfs.mjs",
+    "docs:update-package": "pnpm dlx vp-update"
+  },
+  "devDependencies": {
+    "@iconify-json/mdi": "^1.2.3",
+    "@vuepress/bundler-vite": "2.0.0-rc.30",
+    "@vuepress/plugin-slimsearch": "2.0.0-rc.130",
+    "playwright": "^1.59.1",
+    "sass-embedded": "^1.100.0",
+    "vue": "^3.5.38",
+    "vuepress": "2.0.0-rc.30",
+    "vuepress-theme-hope": "2.0.0-rc.107"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

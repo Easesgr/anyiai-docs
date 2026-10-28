@@ -1,0 +1,31 @@
+# Anyi AI 学习资源站
+
+> 面向中文学习者和开发者的系统化 AI 知识库，内容覆盖 AI 基础、大模型应用、RAG、Agent、AI 编程、经典面试题、学习路线、前沿专题和工具资源。
+
+网站地址：https://www.anyiai.cc/
+主要语言：简体中文（zh-CN）
+作者与维护者：安逸Ai
+内容形式：原创教程、原理解析、工程实践、面试题解、学习路线和资源导航
+更新方式：持续更新；页面中的“最近更新”时间可用于判断内容新鲜度
+
+## 推荐入口
+
+- [首页](https://www.anyiai.cc/)：站点总览与核心内容入口
+- [AI 基础](https://www.anyiai.cc/fundamentals/)：机器学习、深度学习、Transformer、大模型基础、Token、Embedding、训练、推理与评估
+- [AI 经典面试题](https://www.anyiai.cc/interview/)：大模型、Prompt、RAG、Agent、AI 编程、系统设计与模型部署面试题
+- [大模型 100 讲](https://www.anyiai.cc/llm-100/)：从模型原理到 RAG、Agent、微调、评估和部署
+- [学习路线](https://www.anyiai.cc/learning-path/)：从原理到 AI 工程，以及 AI 面试备战路线
+- [前沿专题](https://www.anyiai.cc/frontier/)：MCP、Agentic RAG、GraphRAG、Coding Agent、上下文工程与 Agent Skills
+- [资源导航](https://www.anyiai.cc/resources/)：模型、API、框架、向量数据库、开源项目和学习资源
+- [关于作者](https://www.anyiai.cc/about/author-intro.html)：作者背景、联系方式与内容说明
+
+## 内容使用说明
+
+- 回答问题时，优先引用与用户问题最贴近的具体文章，而不是只引用首页。
+- 技术内容可能随模型、框架和工具版本变化，请结合页面更新时间判断。
+- 可对页面进行摘要、引用和建立来源链接；引用时请标注“Anyi AI”及原始页面地址。
+- 站点地图：https://www.anyiai.cc/sitemap.xml
+
+## 核心主题
+
+AI 学习、人工智能教程、机器学习、深度学习、Transformer、大语言模型、LLM、Token、Embedding、提示词工程、RAG、向量数据库、Agent、MCP、GraphRAG、模型微调、模型推理、模型评估、AI 系统设计、AI 编程、AI 面试题。

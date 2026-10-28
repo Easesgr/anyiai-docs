@@ -1,0 +1,124 @@
+
+name: 部署文档
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      baidu_full_push:
+        description: "部署后向百度提交 Sitemap 中的全部页面"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  deploy-gh-pages:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # 如果你文档需要 Git 子模块，取消注释下一行
+          # submodules: true
+
+      - name: 设置 pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建文档
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+        run: |-
+          pnpm run docs:build
+          > src/.vuepress/dist/.nojekyll
+
+      - name: 部署文档
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          # 部署文档
+          branch: gh-pages
+          folder: src/.vuepress/dist
+
+      - name: 向百度主动推送更新页面
+        env:
+          BAIDU_PUSH_TOKEN: ${{ secrets.BAIDU_PUSH_TOKEN }}
+          BAIDU_FULL_PUSH: ${{ inputs.baidu_full_push || 'false' }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$BAIDU_PUSH_TOKEN" ]; then
+            echo "未配置 BAIDU_PUSH_TOKEN，跳过百度主动推送。"
+            exit 0
+          fi
+
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+          import { readFileSync } from "node:fs";
+
+          const site = "https://www.anyiai.cc";
+          const fullPush = process.env.BAIDU_FULL_PUSH === "true";
+          let urls = [];
+
+          if (fullPush) {
+            const sitemap = readFileSync("src/.vuepress/dist/sitemap.xml", "utf8");
+            urls = [...sitemap.matchAll(/<loc>(.*?)<\/loc>/g)].map((match) => match[1]);
+          } else {
+            const before = process.env.BEFORE_SHA;
+            const current = process.env.CURRENT_SHA;
+            const validBefore = before && !/^0+$/.test(before);
+            const changedFiles = validBefore
+              ? execFileSync("git", ["diff", "--name-only", "--diff-filter=ACMRT", before, current], { encoding: "utf8" })
+              : execFileSync("git", ["show", "--pretty=", "--name-only", "--diff-filter=ACMRT", current], { encoding: "utf8" });
+
+            urls = changedFiles
+              .split("\n")
+              .filter((file) => file.startsWith("src/") && file.endsWith(".md") && !file.startsWith("src/.vuepress/"))
+              .map((file) => {
+                const relative = file.slice(4);
+                const route = relative === "README.md"
+                  ? "/"
+                  : relative.endsWith("/README.md")
+                    ? `/${relative.slice(0, -"README.md".length)}`
+                    : `/${relative.slice(0, -3)}.html`;
+                return new URL(route, site).href;
+              });
+          }
+
+          urls = [...new Set(urls)].filter((url) => url.startsWith(`${site}/`));
+          if (!urls.length) {
+            console.log("本次没有需要推送给百度的内容页面。只修改样式或配置时无需提交。 ");
+            process.exit(0);
+          }
+
+          const endpoint = new URL("https://data.zz.baidu.com/urls");
+          endpoint.searchParams.set("site", site);
+          endpoint.searchParams.set("token", process.env.BAIDU_PUSH_TOKEN);
+
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain" },
+            body: urls.join("\n"),
+          });
+          const result = await response.json();
+          if (!response.ok || result.error) {
+            throw new Error(`百度推送失败：${JSON.stringify(result)}`);
+          }
+
+          console.log(`百度推送完成：成功 ${result.success ?? 0} 条，今日剩余 ${result.remain ?? "未知"} 条。`);
+          if (result.not_same_site?.length) console.warn("非本站链接：", result.not_same_site);
+          if (result.not_valid?.length) console.warn("无效链接：", result.not_valid);
+          NODE

@@ -1,0 +1,19 @@
+// Theme Hope global layout and typography tokens
+$theme-color: #4f7df3;
+
+$vp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+  "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif;
+$vp-font-heading: $vp-font;
+$vp-font-mono: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", Menlo, Monaco,
+  Consolas, monospace;
+
+$navbar-height: 4rem;
+$navbar-mobile-height: 3.5rem;
+$sidebar-width: 17rem;
+$sidebar-mobile-width: 16rem;
+$content-width: 820px;
+$wide-content-width: 1040px;
+$home-page-width: 1360px;
+
+$vp-t-color: "0.2s ease";
+$vp-t-transform: "0.2s ease";
