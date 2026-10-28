@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/.vuepress/public/logo.svg" alt="Anyi Ai Learn" width="200">
+  <img src="src/.vuepress/public/logo.png" alt="Anyi AI" width="320">
 </p>
 
 <h1 align="center">Anyi Ai Learn</h1>
