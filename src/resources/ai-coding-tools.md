@@ -51,6 +51,12 @@ AI 编程工具正在从“补全代码”扩展到理解仓库、调用终端�
 - 官方入口：[Aider](https://aider.chat/docs/) · [Continue](https://docs.continue.dev/)
 - 适合：希望使用不同模型、保留终端或 IDE 使用方式、倾向开源可配置方案的开发者。
 
+### agent-qa（应用验证）
+
+- 官方入口：[agent-qa](https://vostride.com) · [编程智能体工作流](https://vostride.com/docs/agent-qa/guides/coding-agent-workflow)
+- 适合：生成或修改代码后，用自然语言测试网页、Android 与 iOS 应用，通过 CLI/MCP 检查运行证据、修复问题并复测。
+- 特点与评估：memidex 持久记忆与经验证的自我改进可复用测试经验；需 Node.js 24+，并评估模型等服务费用及 FSL-1.1-ALv2 运行时许可证。
+
 ## 安全使用原则
 
 1. 从小任务和测试覆盖好的仓库开始，不要让 Agent 直接改生产环境。
