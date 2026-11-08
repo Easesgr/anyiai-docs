@@ -3,180 +3,273 @@ title: Tool Calling 是什么？大模型如何调用工具？
 icon: mdi:cpu-64-bit
 date: 2026-07-16
 tag:
-  - 大模型100讲
-  - Agent
+- 大模型100讲
+- Agent
+description: 大模型无法直接联网或运行代码。Tool Calling 是模型在提示驱动下输出结构化参数，由外部宿主程序代为执行并将结果回传的协作机制。
 ---
 
-# Tool Calling 是什么？大模型如何调用工具？
+大语言模型本身既不能直接连网，也不能读写你的本地磁盘。如果在对话中问它“北京现在的室外气温是多少”，或者“用户 usr_10023 的账户余额够不够支付 299 元打折后的价格”，模型在不借助外部系统的情况下，只能基于训练期权重生成概率推测，甚至编造虚假数字。
 
-> 一句话核心：Tool Calling（Function Calling）是通过特殊训练让大模型输出结构化JSON来调用外部API的技术，解决"LLM只生成文本、无法执行操作"的核心痛点，是聊天机器人进化为智能体的关键一步。
-## 核心概念（术语表）
+在上一讲[/llm-100/agent-basics/Agent_的核心组成_模型_记忆_工具和规划.md](/llm-100/agent-basics/Agent_的核心组成_模型_记忆_工具和规划.md)中，我们梳理了智能体由模型、记忆、工具和规划四部分组成。本讲我们将聚焦其中最核心的操作环节——工具调用（Tool Calling / Function Calling）。
 
-- **Tool Calling / Function Calling**：让大模型调用外部工具的技术，最早由OpenAI于2023年6月13日提出，本质是通过结构化JSON而不是自然文本来传递调用指令
-- **SFT（Supervised Fine-Tuning）**：监督微调，给模型喂大量「工具调用示范对话」，教会模型"会不会调"
-- **RLHF（Reinforcement Learning from Human Feedback）**：人类反馈强化学习，用打分器调整模型参数，教会模型"该不该调"
-- **奖励模型（Reward Model）**：RLHF中单独训练的小模型，负责判断"哪个回答人类更喜欢"，本质是把人类偏好蒸馏进裁判
-- **工具 Schema / JSON Schema**：工具的说明书，描述函数名、参数类型、功能描述，模型靠它"认识"有哪些工具可用
-- **特殊标记符（Special Tokens）**：如 `<｜tool▁calls▁begin｜>`、`<｜User｜>`，没有文本含义但能规范模型在不同任务模式间切换输出
-- **指令微调（Instruction Tuning）**：在预训练基础上用带标签的文本数据训练，让模型学会各种问题的回答方式
-- **意图识别（Intent Recognition）**：模型判断用户问题是否需要调用工具的关键能力，决定了"调还是不调"
-- **MCP（Model Context Protocol）**：模型上下文协议，Function Calling的升级版，解决多工具管理的生态问题
-- **RLAIF（RL from AI Feedback）**：用AI代替人类打分的RLHF变体，成本更低、速度更快，效果与人工反馈相近
+![工具调用全流程架构图](/images/content-rebuild/dd919fc17a17dae3/cover.png)
+
+先给出一个核心结论：**大模型在工具调用中只负责生成格式化的文本符号，真正的代码运行、网络请求和数据库读写，全部由包裹模型的外部应用程序（称为宿主程序）代为执行。**
+
+下面我们通过一个贯穿全程的例子来看这一过程是如何跑通的：
+> 用户提问：“帮我查一下用户 usr_10023 现有的账户余额，顺便算一下原价 299 元打八五折后的价格。”
+
+---
+
+### 运行边界：模型只生成文本，执行由宿主完成
+
+关于工具调用，最容易产生的一个误解是：模型像操作系统内核一样，自己开辟了线程、创建了 TCP Socket、给第三方接口发送了请求。
+
+从实际运行机制看，大模型只是一个基于自回归计算下一个 Token 条件概率的张量计算程序：
+
+$$P(w_t \mid w_1, w_2, \dots, w_{t-1})$$
+
+模型的输入是一串文本 Token，输出也是一串文本 Token。在运行模型的 GPU 或服务器内存之外，根本不存在直连外部网络或数据库的硬件线路。
+
+![模型与执行器物理隔离图](/images/content-rebuild/dd919fc17a17dae3/fig-1.png)
+
+整个调用过程可以分为两个明确的角色：
+1. **大语言模型（LLM）**：分析用户意图，判断当前问题需要调用哪个工具，并按照约定格式提取并组织参数字符串。
+2. **宿主环境（Host Application）**：开发者编写的外部 Python/Node.js 等应用程序。宿主负责向模型提供可用工具清单、截获模型输出的调用请求、执行具体的本地代码或外部 API，最后把运行结果转化成文本格式送回模型。
+
+---
+
+### 契约定义：如何告诉模型有哪些工具可用
+
+宿主程序必须在向大模型发起请求时，显式传入一份“工具说明书”。目前主流 API（如 OpenAI、Anthropic、DeepSeek 等）普遍采用基于 JSON Schema 的规范。
+
+针对我们前面的例子，宿主程序会向模型注册两个工具声明：
+
+```json
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "get_user_balance",
+      "description": "通过用户ID查询账户当前的可用现金余额",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "系统的唯一用户标识符，例如 usr_10023"
+          }
+        },
+        "required": ["user_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "calculate_discount",
+      "description": "计算商品的折后价格",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "price": {
+            "type": "number",
+            "description": "商品原价"
+          },
+          "discount_rate": {
+            "type": "number",
+            "description": "折扣率，取值范围在 0 到 1 之间，例如 0.85 代表八五折"
+          }
+        },
+        "required": ["price", "discount_rate"]
+      }
+    }
+  }
+]
+```
+
+在底层实现中，API 网关或推理框架会把这段 JSON 结构注入到当前提示词中，或者拼接到专门的系统字段内。
+
+![工具声明转换示意图](/images/content-rebuild/dd919fc17a17dae3/fig-2.png)
+
+模型判断是否调用工具，高度依赖工具名称、参数定义以及 `description` 里的自然语言说明。如果描述含糊不清或与实际场景脱节，模型就容易在解码阶段产生偏差，出现“该调不调”或“选错工具”的现象。
+
 <ReadMoreLock />
 
-## 历史背景 / 来源
+---
 
-**Function Calling 由 OpenAI 于 2023年6月13日 正式提出**（来源：OpenAI官方公告）。当时GPT-4刚发布不久，OpenAI意识到大模型虽然能生成流畅文本，但无法真正"干活"——查不了天气、执行不了操作、控制不了机器人。为了让LLM从"只会说"进化到"能做"，OpenAI设计了这套机制：用外部函数作为中介传递调用请求，模型负责决策，代码负责执行。这一设计成为后续所有Agent开发框架和MCP协议的基础。现在主流Agent开发框架（如Agents-SDK）和MCP技术，本质都是对Function Calling流程的效率优化。
+### 意图判断与生成：模型如何决定调用工具
 
-## 工作原理 / 核心机制
+当带上了工具声明的上下文进入自回归解码时，模型会根据当前语义上下文进行多选一：是直接生成普通的回复语句，还是生成一条结构化的调用指令？
 
-### 整体思路
+支持 Tool Calling 的模型在后训练（Post-training / SFT）阶段，学习了大量带有特殊标记（Special Tokens）的结构化数据。当模型认为需要调用工具时，其生成的输出不再是面向人类的自然语言，而是一个包含参数的载荷结构：
 
-Function Calling的核心是"模型决策 + 代码执行"的分工模式：大模型通过特殊标记符学会在普通对话和工具调用两种模式间切换，当判断需要工具时输出结构化JSON，外部函数接收JSON后真正调用API，最后把结果塞回对话让模型给出最终回答。
+```json
+{
+  "role": "assistant",
+  "content": null,
+  "tool_calls": [
+    {
+      "id": "call_user_001",
+      "type": "function",
+      "function": {
+        "name": "get_user_balance",
+        "arguments": "{\"user_id\": \"usr_10023\"}"
+      }
+    }
+  ]
+}
+```
 
-### 训练阶段
+这里需要注意一个经常被忽略的工程细节：**模型输出的 `arguments` 在传输协议中只是一个被转义的字符串（String），并不是已经完成反序列化的原生对象**。
 
-**第一步：SFT 教"套路"**
+![模型决策与生成时序图](/images/content-rebuild/dd919fc17a17dae3/fig-3.png)
 
-构造训练数据：System消息放工具说明书（函数名、参数、功能）→ User消息放用户提问 → Assistant输出结构化JSON调用请求（如 `{"tool_calls":[{"name":"get_weather","arguments":{"city":"北京"}}]}`）→ Tool消息模拟工具返回 → Assistant给出最终回答。数据来源：人工标注（质量高但贵）+ GPT-4自动生成（成本低、量大，业界主流）。训练规模：几十万到上百万条样本。
+当模型生成完调用指令后，推理服务返回的终止状态（`finish_reason`）会被标记为 `tool_calls`。此时，生成过程暂时中止，控制权交还给外部宿主程序。
 
-**第二步：RLHF 教"边界感"**
+---
 
-1. 对同一问题生成多种回答（调工具/不调/参数填错），覆盖各种情况
-2. 人类标注员判断哪种回答更合理
-3. 用打分数据训练奖励模型（Reward Model），相当于"会打分的裁判"
-4. 用奖励模型的分数强化学习调整主模型参数，让它倾向产出高分回答
+### 宿主拦截与执行：反序列化、校验与权限拦截
 
-关键点：奖励模型的打分能力从人类偏好中学出来，如果人类标注员水平不稳定，奖励模型会学到歪的标准。
+宿主程序检测到 `finish_reason == "tool_calls"` 后，绝对不能直接无脑把模型参数送入执行引擎，必须经过三道防线：
 
-### 推理阶段
+1. **语法反序列化**：把 `arguments` 字符串解析成字典对象。即便模型正常结束生成，输出的文本也可能包含未转义字符或格式残缺，直接反序列化会导致解析库抛出语法错误（若因达到 Token 上限中途截断，服务端通常会返回 `finish_reason == "length"`，宿主应先行拦截）。
+2. **契约校验**：使用类型检查工具（如 Python 的 Pydantic）校验字段类型和取值范围。比如 `discount_rate` 是否在 `0` 到 `1` 之间，是否缺少了必填字段。
+3. **权限与安全拦截**：防范提示词注入（Prompt Injection）导致的危险操作。提示词注入并不等同于系统越狱，但攻击者可能诱导模型在参数里填入诸如 `path: "../../etc/passwd"` 或越权的 `user_id`。这类访问控制必须在宿主代码中通过白名单和沙箱硬性拦截，不能寄希望于模型自觉遵守规则。
 
-1. 应用代码把工具Schema（JSON格式说明书）连同用户问题一起发给模型
-2. 模型判断是否需要工具：无关问题直接回答，相关问题输出 `tool_calls` JSON
-3. 外部函数接收JSON，自动带入参数运行API
-4. 把结果封装为 `function response message` 加入消息列表
-5. 模型拿到结果，给出最终自然语言回答
-## 关键知识点
+![宿主拦截与校验流程图](/images/content-rebuild/dd919fc17a17dae3/fig-4.png)
 
-1. **LLM预训练只学文本生成**：模型从出生到成年只生活在文字世界，见过海量书籍却从没接触过工具，根本不知道"API调用"是什么
-2. **工具调用不是涌现能力**：参数量大只能让模型理解力和推理能力变强，输出可解析的JSON格式是预训练语料里根本不存在的模式，必须后天训练
-3. **SFT只解决"会不会"不解决"该不该"**：训练样本里"该调场景"占绝大多数，模型会过拟合"积极调用"倾向，看过「1+1」也要去查计算器
-4. **RLHF解决"边界感"**：经过人类反馈，模型学会能直接回答就回答、需要实时数据才调用，这是SFT给不了的
-5. **模型只负责决策不负责执行**：整个过程模型只是在"下指令"，真正执行工具的是你的代码
-6. **意图识别是最大难点**：三个问题都提到"北京"但意图完全不同——电影推荐（不调）、穿衣建议（查北京）、旅游规划（查北京+杭州）
-7. **特殊标记符是模式切换的关键**：DeepSeek-V3的 `<｜begin▁of▁sentence｜>`、`<｜User｜>` 等标记没有文本含义，但能规范模型在不同响应模式间切换
-8. **Function Calling是JSON而非自然语言**：JSON格式固定、机器好解析，代码才能准确读到"调哪个工具、参数是什么"
-9. **DeepSeek R1放弃Function Calling**：为优先保障推理能力（R1核心定位），选择不训练工具调用，这是模型设计的权衡取舍
-10. **没有原生Function Calling的模型也能用工具**：通过提示词工程引导，虽然不如原生支持的效果好，但技术上可行
-11. **MCP是Function Calling的生态升级**：解决多工具管理问题，让开发者无缝接入海量外部工具生态，像搭积木一样开发Agent
-12. **训练数据用特殊标记分隔输入输出**：指令微调数据中，`<｜tool▁calls▁begin｜>` 和 `<｜tool▁calls▁end｜>` 标记告诉模型这里要输出结构化调用
-13. **RLAIF已接近人工反馈效果**：用AI打分代替人类标注，成本更低、速度更快，业界现在很常用
-14. **工具Schema本质是"名片"**：描述函数的输入输出，让模型知道这个工具是干什么的、怎么用
+校验通过后，宿主程序根据 `name` 字段找到真实的本地函数或外部接口并发起执行。
 
-## 应用场景
+---
 
-- **DeepSeek Mini Manus**：用6个外部工具实现复杂任务自动化，用户描述目标后Agent自动规划调用哪几个工具完成任务
-- **Claude Code / Cursor**：AI编程助手，通过Function Calling调用文件系统API、bash命令API，执行代码、读写文件
-- **OpenWeather + 聊天机器人**：用户问"北京天气"，Agent自动调用天气API获取实时数据再回答，而非让用户自己去查
-- **企业知识库问答**：结合RAG技术，Agent判断需要查哪个知识库文档，调用搜索API获取最新信息再综合回答
-- **电商智能客服**：同时调用库存API（查有没有货）、物流API（查发货时间）、价格API（查优惠），一次性回答用户多个问题
+### 回传与多调用对齐：tool_call_id 的作用
 
-## 常见误区 / 踩坑
+宿主环境运行完代码后，拿到执行结果（比如查询到账户余额为 500 元），必须把它包装成约定格式的消息追加到对话历史中。
 
-- ❌ **误区1：认为Function Calling是LLM直接执行代码**
-  ✅ **正解**：模型只输出JSON调用请求，真正执行的是你的代码。模型是"决策者"不是"执行者"
+在通用规范中，回传消息具有以下固定属性：
+- `role`: `"tool"`
+- `tool_call_id`: 必须与前面模型生成的 `id`（例如 `call_user_001`）严格匹配。
+- `content`: 工具执行结果的字符串表示（如 `'{"balance": 500.0, "currency": "CNY"}'`）。
 
-- ❌ **误区2：以为工具调用能力是大模型涌现出来的**
-  ✅ **正解**：涌现能力是"量变引起质变"，指参数量大后理解力变强，但输出结构化JSON是预训练语料里根本不存在的模式，必须后天专门训练
+**为什么必须携带 `tool_call_id`？**
+模型支持并行调用多个工具（Parallel Tool Calling）。例如模型在同一轮中同时发起了查询余额和计算折扣两个请求：
 
-- ❌ **误区3：认为SFT训练完模型就知道"什么时候该调工具"**
-  ✅ **正解**：SFT只教"套路"，模型会过拟合积极调用倾向，必须再通过RLHF建立边界感
+$$\text{call\_1: get\_user\_balance}, \quad \text{call\_2: calculate\_discount}$$
 
-- ❌ **误区4：以为所有大模型都支持Function Calling**
-  ✅ **正解**：DeepSeek R1等推理模型为优先保障推理能力，选择放弃Function Calling训练。没有原生支持的模型需要用提示词工程补救
+宿主并发发起请求时，外部接口返回的顺序往往是不确定的。模型正是依赖消息中的 `tool_call_id`，将返回的数据与之前的每个请求精准关联起来。
 
-- ❌ **误区5：认为Function Calling和MCP是竞争关系**
-  ✅ **正解**：MCP是Function Calling的生态升级，解决多工具管理问题，两者协同而非替代
+![上下文回传拼接闭环图](/images/content-rebuild/dd919fc17a17dae3/fig-5.png)
 
-## 性能 / 复杂度
+当宿主把所有的工具结果拼回消息历史后，会再次向大模型发起第二次推理请求。此时模型的上下文里同时包含了“原始问题 + 模型的调用指令 + 工具的真实输出”。模型阅读到这组事实后，才能组织出最终回答：“用户 usr_10023 当前余额为 500 元；原价 299 元打八五折后为 254.15 元，余额充足，可以完成支付。”
 
-- **意图识别准确率**：直接影响Function Calling成功率，差的模型可能"该调不调、不该调乱调"
-- **工具匹配复杂度**：当工具数量从3个增加到30个，意图识别的难度指数上升（n个工具 → n种意图组合）
-- **延迟**：多轮调用工具时，每次API请求增加200-500ms延迟，多步任务可能累积到数秒
+---
 
-**与替代方案对比**：
-- **方案A：纯提示词工程引导**（无原生Function Calling），速度无额外开销，但准确率低30-40%
-- **方案B：原生Function Calling**，准确率高，但需要额外训练成本
-- **临界点**：简单单轮任务用提示词勉强可行，复杂多工具任务必须用原生支持
+### 失败处理：工具报错时的应对策略
 
-## 与相关概念的区别
+在实际生产中，网络超时、参数不合法、接口崩溃是常见现象。系统不能因为单次工具报错就直接崩溃。
 
-- **vs API调用**：API调用是代码直接调代码，Function Calling是AI决策后调代码。Function Calling多了"意图识别"环节，知道什么时候该调
-- **vs MCP协议**：Function Calling是一对一工具调用，MCP是标准化多工具管理。Function Calling是"单兵作战"，MCP是"集团军作战"
-- **vs Agent**：Function Calling是Agent的能力之一，Agent = 大模型 + 工具调用 + 记忆 + 规划。Function Calling是Agent的"手"
+工具执行阶段的常见故障可以分为两类：
 
-## 进阶 / 面试加分项
+| 故障分类 | 常见原因 | 宿主处理方式 |
+| :--- | :--- | :--- |
+| **模型生成端错误** | 输出的 JSON 缺少闭合括号、漏掉必填参数、参数类型错误（如把数字传成了字符串）。 | **错误回传重试**：将解析器给出的具体校验报错包装为 `role: tool` 的内容回传给模型。模型看到报错后，通常会在下一轮重新生成正确的参数。 |
+| **外部系统执行错误** | 接口超时、第三方数据库连接失败、目标资源不存在。 | **降级与兜底**：向模型回传错误状态，让模型向用户解释当前某项服务暂不可用；或者由宿主程序触发备用接口。 |
 
-- **最新进展**：MCP协议（2024年由Anthropic提出）正在成为工具调用的事实标准，解决Function Calling无法统一管理多工具的痛点，A2A协议进一步解决多Agent协作问题
-- **业界争议**：推理模型（如DeepSeek R1）是否应该保留Function Calling能力——保障推理深度 vs 保持工具调用的广度，模型设计必须做权衡
-- **一句话送给候选人**：Function Calling训练的本质是"教模型说机器能听懂的话"，SFT给词汇表，RLHF给语法规则，缺一不可
+![异常重试与自愈时序图](/images/content-rebuild/dd919fc17a17dae3/fig-6.png)
 
+需要说明的是，**模型重试并不保证 100% 成功纠错**。在极少数情况下，模型可能会反复输出错误的参数。因此，宿主程序必须在代码层面设立最大重试次数（例如最多重试 2 次），超过阈值时必须执行中断或熔断逻辑，避免死循环消耗大量 Token。
 
-## 面试如何回答
+---
 
+### 最小可运行实验：手动实现一个工具调用循环
 
-### 🟢 什么是 Function Calling？它和普通的 API 调用有什么区别？
+下面我们用一段纯原生 Python 代码模拟整个调用生命周期，无需安装 LangChain 或复杂 Agent 框架：
 
-**回答要点**：
+```python
+import json
 
-Function Calling（也叫 Tool Calling）是一种让大模型调用外部工具的技术，核心是模型输出结构化 JSON 来传递调用指令，而不是像普通 API 调用那样由代码直接触发。关键区别在于：普通 API 调用是规则驱动的（写 if-else 判断什么时候调）， Function Calling 是意图驱动的（AI 自己判断要不要调）。举例：用户问"北京天气怎么样"，Function Calling 让 AI 自动识别需要查天气，然后输出 `{"tool_calls":[{"name":"get_weather","arguments":{"city":"北京"}}]}`，外部函数拿到这个 JSON 才真正调用天气 API。这个设计最早由 OpenAI 在 2023 年 6 月提出，解决了 LLM "只会说、不会做" 的核心痛点。
+# 1. 宿主环境中的真实业务函数
+def calculate_discount(price: float, discount_rate: float) -> str:
+    if not (0 < discount_rate <= 1):
+        return json.dumps({"error": "折扣率必须在 (0, 1] 之间"})
+    final_price = round(price * discount_rate, 2)
+    return json.dumps({"final_price": final_price})
 
+# 2. 模拟大模型在第 1 轮返回的调用指令（模拟实际 API 返回）
+mock_model_response = {
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [
+        {
+            "id": "call_discount_99",
+            "type": "function",
+            "function": {
+                "name": "calculate_discount",
+                "arguments": '{"price": 299.0, "discount_rate": 0.85}'
+            }
+        }
+    ]
+}
 
-### 🟡 为什么大模型不会天生调用工具？工具调用能力是怎么训练出来的？
+# 3. 宿主对话上下文容器
+messages = [
+    {"role": "user", "content": "原价 299 元打八五折是多少钱？"},
+    mock_model_response
+]
 
-**回答要点**：
+# 4. 宿主执行器：拦截、反序列化、校验并分发执行
+def host_dispatch(tool_call: dict) -> dict:
+    call_id = tool_call["id"]
+    func_name = tool_call["function"]["name"]
+    raw_args = tool_call["function"]["arguments"]
+    
+    # 语法反序列化
+    try:
+        args = json.loads(raw_args)
+    except json.JSONDecodeError as e:
+        return {"tool_call_id": call_id, "content": json.dumps({"error": f"JSON格式错误: {str(e)}"})}
+    
+    # 校验并执行
+    if func_name == "calculate_discount":
+        try:
+            price = float(args["price"])
+            discount_rate = float(args["discount_rate"])
+            result_str = calculate_discount(price, discount_rate)
+            return {"tool_call_id": call_id, "content": result_str}
+        except (KeyError, ValueError, TypeError) as e:
+            return {"tool_call_id": call_id, "content": json.dumps({"error": f"参数错误: {str(e)}"})}
+    
+    return {"tool_call_id": call_id, "content": json.dumps({"error": "未知工具"})}
 
-大模型预训练阶段只学文本生成，见过海量书籍却从未接触过工具，所以遇到"查天气"只会说"我需要调用天气 API"，而不会输出可解析的 JSON 调用请求。工具调用能力靠两个阶段后天训练：第一阶段是 SFT（监督微调），给模型喂大量「工具调用示范对话」，让它学会看到工具描述 → 判断要不要调 → 输出结构化 JSON 这整套流程；第二阶段是 RLHF（人类反馈强化学习），让模型生成多种回答（调/不调/参数错），人类标注员打分，训练奖励模型，再用强化学习调整参数，让模型学会"什么时候不该调"。简单说：SFT 教"套路"，RLHF 教"边界感"，缺一不可。
+# 5. 宿主执行工具并将结果组装为 role: tool 消息追加回上下文
+call_item = mock_model_response["tool_calls"][0]
+execution_result = host_dispatch(call_item)
 
+messages.append({
+    "role": "tool",
+    "tool_call_id": execution_result["tool_call_id"],
+    "content": execution_result["content"]
+})
 
-### 🟡 SFT 和 RLHF 在工具调用训练中各自解决什么问题？为什么 RLHF 不可省略？
+# 查看组装完成的上下文，此时即可发起第 2 次模型 API 调用
+print(json.dumps(messages, ensure_ascii=False, indent=2))
+```
 
-**回答要点**：
+---
 
-SFT 只解决了"会不会调"，RLHF 解决"该不该调"。举个例子：经过 SFT 训练的模型，遇到"1+1 等于几"也可能去调计算器工具，这明显画蛇添足。为什么会这样？因为 SFT 训练样本里"该调的场景"占绝大多数，模型在模仿中会过拟合"积极调用"的倾向，没有看过足够多的"不该调"反例，所以边界感天然就弱。RLHF 通过人类反馈建立边界感：让模型生成多样回答，人类判断哪种更合理，训练奖励模型打分，再用强化学习优化主模型，让它学会"能直接回答的就直接回答、需要实时数据的才调用"。这个边界感是 SFT 给不了的，必须靠反馈信号来塑造。
+### 动手练习
 
+为了检验你对宿主拦截与错误处理的理解，请完成以下练习：
 
-### 🟡 Function Calling 的运行时流程是怎样的？请详细描述每个步骤
+1. 修改上述代码中的 `arguments` 为不合法的数据：`'{"price": 299.0, "discount_rate": 1.5}'`。
+2. 观察 `host_dispatch` 产生的输出。宿主程序回传了什么格式的错误信息？
+3. 思考并在代码中增加一个计数器：如果连续收到两次带有 `error` 字段的工具回传，宿主程序应当如何直接给出兜底文案，而不再将错误送给模型陷入死循环？
 
-**回答要点**：
+---
 
-运行时流程分三步走：第一步，应用代码把工具 Schema（JSON 格式的工具说明书，包含函数名、参数、功能描述）连同用户问题一起发给模型；第二步，模型进行意图识别——如果判断问题与工具无关（如"你好"），直接生成自然语言回答；如果判断需要工具（如"北京天气"），输出包含 `tool_calls` 字段的结构化 JSON；第三步，外部函数接收这个 JSON，自动带入参数调用真正的 API（如 OpenWeather），把返回结果（如"晴，15°C"）封装为 `function response message` 加入消息列表，模型拿到结果再给出最终自然语言回答（"北京今天天气晴朗，气温15°C"）。整个过程模型只是"决策者"，真正"执行者"是你的代码。
+### 下一步
 
-
-### 🔴 为什么有些推理模型（如 DeepSeek R1）不支持 Function Calling？模型是如何学会在不同响应模式间切换的？
-
-**回答要点**：
-
-模型设计必须做权衡：Function Calling 训练和推理能力训练在资源分配上有冲突。DeepSeek R1 为了优先保障推理深度，选择主动放弃 Function Calling 训练，这是产品定位的取舍而非技术缺陷。关于模式切换：大模型靠特殊标记符（Special Tokens）实现不同响应模式。拿 DeepSeek-V3 来说，输入文本中包含 `<｜User｜>`、`<｜Assistant｜>`、`<｜tool▁calls▁begin｜>` 等隐藏标记，这些标记没有文本含义但能规范模型行为。训练时，带工具的样本在 output 中包含 `<｜tool▁calls▁begin｜>get_weather<｜tool▁calls▁end｜>` 这样的结构，让模型学会"遇到这类标记就输出 JSON"。本质上，Function Calling 就是用特殊标记符规范的一种特殊响应模式。
-
-
-### 🟡 Function Calling 和 MCP 协议有什么区别？什么场景用哪个？
-
-**回答要点**：
-
-Function Calling 是一对一工具调用（一个模型调一个工具），MCP（Model Context Protocol）是标准化多工具管理（一个模型管多个工具）。打个比方：Function Calling 像"单兵作战"，每个工具单独对接；MCP 像"集团军作战"，通过统一协议管理所有工具。Function Calling 的痛点是：当系统有 30 个工具时，每个工具都要单独写接口，管理和维护成本极高。MCP 解决了这个问题，让开发者可以无缝接入海量外部工具生态，像搭积木一样开发 Agent。实际选择：简单场景（2-3 个工具）用 Function Calling 足够；复杂场景（10+ 工具、多 Agent 协作）用 MCP 更合适。现在 Claude Code、Agents-SDK 等主流框架都支持 MCP。
-
-
-### 🟡 如果模型没有原生 Function Calling 能力，有什么补救方案？效果如何？
-
-**回答要点**：
-
-可以用提示词工程（Prompt Engineering）引导模型输出结构化信息，但效果不如原生支持。核心技巧是：在 System Prompt 里明确告诉模型"你有哪些工具可用，当用户问 XX 时，你应该输出 JSON 格式 `{"tool":"xxx","params":{}}`"，并给出几个示例。这种方案相当于"用自然语言教模型规则"，优点是零训练成本、任何模型都能用；缺点是模型可能不遵守格式、意图识别准确率低 30-40%、复杂多工具场景下几乎不可用。更进阶的方案是用微调数据在小模型上蒸馏 Function Calling 能力。实际建议：简单单轮任务可以尝试提示词工程，复杂多工具任务必须用原生支持或换模型。
-
-
-### 🔴 训练 Function Calling 时的数据是怎么构造的？有没有什么坑？
-
-**回答要点**：
-
-训练数据构造有两种来源：人工标注（成本高但质量好，一般用于构造核心种子数据）和用 GPT-4 自动批量生成（成本低、量大，业界主流做法，需人工抽查）。数据格式是关键：一条完整样本包含 System 消息（工具说明书）、User 消息（用户提问）、Assistant 调用请求（结构化 JSON，不是自然语言！）、Tool 消息（模拟工具返回）、Assistant 最终回答。特别要注意的是，RLHF 阶段如果人类标注员水平不稳定、标准不一致，奖励模型会学到歪的打分标准，导致主模型优化方向偏离。另外，训练数据中"该调"和"不该调"的样本比例要平衡，否则模型会过拟合"积极调用"倾向——这些都是容易踩的坑。
-
+掌握了单次 Tool Calling 之后，你会发现很多真实系统面临两个扩展问题：
+1. 如果工具运行在远程服务器或外部独立进程中，如何用标准化协议连接它们？请看下一讲[/llm-100/agent-basics/Function_Calling_和_MCP_有什么区别.md](/llm-100/agent-basics/Function_Calling_和_MCP_有什么区别.md)。
+2. 如果一个复杂任务需要“思考一次、查一次、再思考、再查”，如何组织多步连续的工具调用？请继续学习[/llm-100/agent-basics/ReAct_框架是什么_为什么适合_Agent.md](/llm-100/agent-basics/ReAct_框架是什么_为什么适合_Agent.md)。

@@ -1,260 +1,122 @@
 ---
 title: 更新日志
 icon: mdi:history
+description: 记录安逸Ai文档站从立项规划、多Agent辅助生成实践到各专题板块上线的演进历程与版本变动。
 ---
 
-# 更新日志
+![安逸Ai站点历史版本与内容更新记录时间轴](/images/content-rebuild/11c990fc39e8d8ff/cover.png)
+
+安逸Ai从个人学习笔记整理逐步演进为系统化的 AI 文档导航站。本页面按时间倒序记录网站在内容模块规划、文档架构搭建、页面样式调优以及辅助工程实践中的真实更新节点。关于站点的整体规划与作者背景，可参阅[关于本站](/about/README.md)与[作者介绍](/about/author-intro.md)。
+
+---
 
 ## 2026 年 7 月
 
-<div class="timeline">
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">7 月 17 日</div>
-      <div class="timeline-title">大模型100讲板块重构</div>
-      <div class="timeline-desc">
-        为「AI 基础」「AI经典面试题」「大模型100讲」三个板块生成 31 张封面图并插入到各目录首页。<br>
-        重写大模型100讲合集文章，添加叙事性导语和篇章分组，与其他板块风格统一。<br>
-        修复「学习路线」导航栏点击无法跳转的问题。<br>
-        更换「关于本站」页面 Logo 为 PNG 格式。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">7 月 16 日</div>
-      <div class="timeline-title">前沿专题板块大规模扩充</div>
-      <div class="timeline-desc">
-        一次性整合 13 个前沿专题合集，共 39 篇文章上线：<br>
-        MCP 协议（3 篇）、Agent Skills（3 篇）、Agentic RAG（3 篇）、GraphRAG（3 篇）、AI Coding Agent（3 篇）、AI Workflow（3 篇）、工作流编排（3 篇）、Agent 记忆系统（3 篇）、多轮对话（3 篇）、文档解析（3 篇）、上下文工程（2 篇）、长上下文应用（3 篇）、本地大模型（3 篇）、Vibe Coding（3 篇）。<br>
-        每个合集均包含：合集首页、3 篇文章、独立封面图、ReadMoreLock 阅读锁定。<br>
-        全站关键词从「anyi2024」统一更换为「验证码」。<br>
-        应用 JavaGuide 风格字体（Georgia 衬线体）到全站。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">7 月上旬</div>
-      <div class="timeline-title">资源导航板块内容填充</div>
-      <div class="timeline-desc">
-        完成「资源导航」全部 11 个子页面的内容填充：<br>
-        API 平台、模型平台、向量数据库、RAG 框架、Agent 框架、AI 编程工具、AI 工具导航、MCP Server、AI 开源项目、技术书籍、论文资源。<br>
-        每个页面包含 10+ 精选资源推荐，附带简介和使用场景说明。
-      </div>
-    </div>
-  </div>
-</div>
+### 7 月 17 日
+- **大模型 100 讲合集整理与视觉规范统一**
+  - 为 [AI 基础](/fundamentals/)、[AI 经典面试题](/interview/)、[大模型 100 讲](/llm-100/) 三个板块设计并补充目录封面图，统一列表与正文的视觉排版。
+  - 梳理大模型 100 讲合集结构，完善引导文案与章节分组，使其与整站知识体系对齐。
+  - 修复导航栏中「学习路线」点击后的锚点跳转异常。
+  - 更新「关于本站」中的站点标识为清晰的 PNG 格式资源。
 
-## 2026 年 6 月
+### 7 月 16 日
+- **前沿专题板块扩充**
+  - [前沿专题](/frontier/) 上线 13 个技术主题合集，涉及 MCP 协议、Agentic RAG、GraphRAG、AI Coding Agent、AI 工作流编排、Agent 记忆系统、多轮对话、文档解析、长上下文工程、本地大模型及 Vibe Coding 等。
+  - 各合集补充专题主页、导读与阅读限制组件配置。
+  - 统一全站阅读验证关键词，调整正文英文字体展示风格。
 
-<div class="timeline">
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">6 月下旬</div>
-      <div class="timeline-title">大模型100讲板块上线</div>
-      <div class="timeline-desc">
-        「大模型100讲」板块正式上线，覆盖 10 大模块：基础篇、训练原理篇、微调与对齐篇、Prompt 工程篇、RAG 检索增强篇、Agent 基础篇、Agent 工程篇、大模型应用系统篇、部署与推理优化篇、评估安全与面试综合篇。<br>
-        基础篇（10 篇）、Prompt 工程篇（10 篇）、Agent 基础篇（10 篇）共计 30 篇文章完成上线。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">6 月中旬</div>
-      <div class="timeline-title">首页改版与移动端适配</div>
-      <div class="timeline-desc">
-        首页布局重构：栏目卡片上移，个人媒体和定制开发区域下移。<br>
-        Logo 放大至 400px，移除荧光浮动动画。<br>
-        修复移动端「个人媒体」和「定制开发服务」区域的响应式布局问题。<br>
-        新增合作交流浮窗功能。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">6 月 9 日</div>
-      <div class="timeline-title">站点优化与内容完善</div>
-      <div class="timeline-desc">
-        全站图片批量添加水印保护。<br>
-        优化首页布局和导航结构，统一各板块首页样式。<br>
-        完善站点介绍、作者介绍、更新日志等页面内容。<br>
-        配置 SEO 优化和 AI 搜索引擎适配。<br>
-        <strong>注：站点域名正在 ICP 备案中，暂时部署在中国境外，访问速度欠佳。备案通过后将迁移至中国境内部署。</strong>
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">6 月 6 日</div>
-      <div class="timeline-title">网站正式上线</div>
-      <div class="timeline-desc">
-        站点域名 anyiai.cc 正式上线，部署至 GitHub Pages。<br>
-        完成「AI经典面试题」全部内容整合，8 大模块 100+ 篇面试文章全部就绪。<br>
-        包括：大模型面试题（18 篇）、Prompt 面试题（12 篇）、RAG 面试题（14 篇）、Agent 面试题（13 篇）、AI 编程面试题（5 篇）、AI 系统设计面试题（12 篇）、模型部署面试题（12 篇）、AI 高频场景题（14 篇）。
-      </div>
-    </div>
-  </div>
-</div>
-
-## 2026 年 5 月
-
-<div class="timeline">
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">5 月下旬</div>
-      <div class="timeline-title">AI 基础板块全部就绪</div>
-      <div class="timeline-desc">
-        完成「AI 基础」全部内容整合，10 大模块 80+ 篇文章全部就绪。<br>
-        包括：机器学习基础、深度学习基础、Transformer 架构、大模型基础、Token 与分词、Embedding、训练与微调、推理与生成、多模态基础、评测指标。<br>
-        优化 ReadMoreLock 阅读锁定组件，修复内容隐藏失效问题。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">5 月中旬</div>
-      <div class="timeline-title">面试题内容批量生产</div>
-      <div class="timeline-desc">
-        通过内容生成平台批量产出 8 个面试题方向的初稿。<br>
-        大模型面试题、Prompt 面试题、RAG 面试题、Agent 面试题、AI 编程面试题、AI 系统设计面试题、模型部署面试题、AI 高频场景题。<br>
-        开始逐个整合到 VuePress 站点。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">5 月上旬</div>
-      <div class="timeline-title">站点正式搭建，首批内容上线</div>
-      <div class="timeline-desc">
-        VuePress 2 + vuepress-theme-hope 主题选型与基础配置。<br>
-        搭建多语言支持框架、导航栏、侧边栏、搜索功能。<br>
-        实现 ReadMoreLock 阅读锁定功能（验证码解锁机制）。<br>
-        首批 6 个模块文章集成上线（机器学习、深度学习、Transformer、大模型基础、Token与分词、Embedding）。<br>
-        配置 GitHub Actions 自动部署到 gh-pages。
-      </div>
-    </div>
-  </div>
-</div>
-
-## 2026 年 4 月
-
-<div class="timeline">
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">4 月下旬</div>
-      <div class="timeline-title">内容框架定型，开始批量创作</div>
-      <div class="timeline-desc">
-        确定站点整体信息架构：6 大板块、50+ 子栏目。<br>
-        设计文章模板与写作风格规范（说人话、有问题导向、有体系、能落地）。<br>
-        启动「AI 基础」板块全部文章初稿创作（10 大模块 80+ 篇）。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">4 月中旬</div>
-      <div class="timeline-title">内容生产流水线搭建</div>
-      <div class="timeline-desc">
-        基于 CrewAI 搭建多 Agent 内容生成平台，实现批量文章生产。<br>
-        将内容生产的 5 个流程拆分为 32 个 Agent/Crew 和 17 个自定义工具。<br>
-        通过 YAML 配置实现 Agent 角色与任务的配置化管理。<br>
-        完成第一批文章的内容审核与优化。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">4 月上旬</div>
-      <div class="timeline-title">从内容平台到文档站点的转变</div>
-      <div class="timeline-desc">
-        之前一直在内容创作平台上生产 AI 学习文章，内容越积越多。<br>
-        很多读者反馈：内容很好，但在平台上翻阅不方便，希望有文档版本，可以按章节系统学习。<br>
-        决定搭建独立的文档站点，把已有内容迁移过去，同时规划更完整的内容体系。<br>
-        确定站点定位：AI 技术栈全链路学习资源站。
-      </div>
-    </div>
-  </div>
-</div>
-
-## 2026 年 3 月
-
-<div class="timeline">
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">3 月下旬</div>
-      <div class="timeline-title">内容创作平台搭建</div>
-      <div class="timeline-desc">
-        基于 CrewAI 多 Agent 框架搭建端到端 AI 内容生产平台。<br>
-        覆盖选题调研、文章生成、封面设计、动态页面生成和短视频合成等流程。<br>
-        支持 5 类内容的批量化生产。<br>
-        开始批量产出 AI 基础知识文章。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">3 月中旬</div>
-      <div class="timeline-title">RAG 助手项目启动</div>
-      <div class="timeline-desc">
-        启动 AI 面试 RAG 助手项目，构建 Markdown 知识库。<br>
-        设计"向量检索 + BM25 + RRF 融合 + Reranker 重排序"混合检索链路。<br>
-        完成知识库数据构建，覆盖大模型、RAG、Agent、Prompt、模型部署等主题。
-      </div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">3 月上旬</div>
-      <div class="timeline-title">项目萌芽</div>
-      <div class="timeline-desc">
-        在学习和实践 AI 技术的过程中，发现市面上的资料要么太浅、要么太深、要么太散。<br>
-        开始系统整理自己的学习笔记和实践经验。<br>
-        最初只是在个人博客上零散发布，后来决定做成体系化的内容。
-      </div>
-    </div>
-  </div>
-</div>
+### 7 月上旬
+- **资源导航板块整理**
+  - 完善 [资源导航](/resources/) 11 个分类页面，包括 API 服务、模型聚合平台、向量数据库、RAG 框架、Agent 框架、AI 编程工具、MCP 资源、开源项目及论文书籍等。
+  - 补充各分类工具的使用场景说明与官方主页直达链接。
 
 ---
 
-## 站点数据
+## 2026 年 6 月
 
-<div class="update-grid">
-  <div class="update-card">
-    <div class="update-card-title">内容规模</div>
-    <div class="update-card-items">
-      <span>AI 基础：10 模块 80+ 篇</span>
-      <span>AI经典面试题：8 模块 100+ 篇</span>
-      <span>大模型100讲：10 模块 30+ 篇</span>
-      <span>前沿专题：15 个合集 40+ 篇</span>
-      <span>资源导航：11 个子页面</span>
-    </div>
-  </div>
-  <div class="update-card">
-    <div class="update-card-title">技术栈</div>
-    <div class="update-card-items">
-      <span>VuePress 2</span>
-      <span>vuepress-theme-hope</span>
-      <span>GitHub Pages</span>
-      <span>GitHub Actions CI/CD</span>
-      <span>CrewAI 内容生成平台</span>
-    </div>
-  </div>
-</div>
+### 6 月下旬
+- **大模型 100 讲板块初始上线**
+  - 规划大模型 100 讲板块结构，涵盖大模型基础、训练原理、微调对齐、Prompt 工程、RAG 检索增强、Agent 原理与工程落地、应用系统架构、部署推理优化及安全评估。
+  - 首期上线基础篇、Prompt 工程篇与 Agent 基础篇共计 30 篇梳理文档。
+
+### 6 月中旬
+- **页面布局调整与移动端适配**
+  - 重构首页结构，优化顶部核心栏目卡片的层级，增强小屏幕设备的响应式排版表现。
+  - 完善移动端折叠导航与侧边栏目录联动。
+
+### 6 月 9 日
+- **站点部署调优与说明页面补充**
+  - 补充站务说明文档，包括 [更新日志](/about/update-history.md)、[关于本站](/about/README.md) 及 [常见问题](/about/faq.md)。
+  - 优化全站图片静态加载路径，配置基础的元数据标签与检索适配。
+
+### 6 月 6 日
+- **文档站正式部署与面试题板块上线**
+  - 站点部署至 GitHub Pages（域名 `anyiai.cc`）。
+  - [AI 经典面试题](/interview/) 板块全量上线，涵盖大模型核心机制、Prompt 工程、RAG 系统、Agent 设计、系统架构、部署推理及高频场景应用等多个分类题库。
+
+---
+
+## 2026 年 5 月
+
+### 5 月下旬
+- **AI 基础板块结构闭环**
+  - [AI 基础](/fundamentals/) 板块 10 大模块全部整理完成，覆盖机器学习基础、深度学习基础、Transformer 架构、大模型通识、分词机制、向量表征、微调训练、推理生成、多模态及评测指标。
+  - 调试并优化阅读锁组件在代码块与卡片样式中的显示逻辑。
+
+### 5 月中旬
+- **面试题与工程案例初稿整理**
+  - 梳理常见 AI 技术岗位考核重点，分类沉淀技术问答草稿，并建立各主题之间的交叉跳转索引。
+  - 启动面向文档站 Markdown 格式的校验与排版转换。
+
+### 5 月上旬
+- **VuePress 文档工程搭建**
+  - 选用 VuePress 2 配合 `vuepress-theme-hope` 主题完成基础站点脚手架搭建。
+  - 配置全局搜索插件、侧边栏分类树、导航栏配置及 Markdown 扩展插件。
+  - 建立 GitHub Actions 自动化构建与静态资源发布流水线。
+  - 首次导入 AI 基础前 6 个核心模块。
+
+---
+
+## 2026 年 4 月
+
+### 4 月下旬
+- **内容信息架构与文风规范制定**
+  - 明确站点定位于系统化 AI 学习导航，拒绝零散知识堆砌与空泛术语灌水。
+  - 确立“技术机制解释清楚、给出明确输入输出边界、注重工程可落地性”的撰写标准。
+  - 规划基础、进阶、应用与前沿的梯度学习路径。
+
+### 4 月中旬
+- **辅助内容生产脚本试验**
+  - 探索基于 CrewAI 的多 Agent 辅助生产流程，将选题调研、大纲拟定、文本校对与格式转换分工配置为自动化任务链，以辅助个人创作者加速资料搜集与草稿整理。
+
+### 4 月上旬
+- **从零散笔记向文档站体系演进**
+  - 评估原有碎片化笔记在长线查阅与检索方面的局限，决定采用静态文档站进行系统化承载与长期归档。
+  - 完成首期知识体系脑图梳理。
+
+---
+
+## 2026 年 3 月
+
+### 3 月下旬
+- **多 Agent 创作与多模态自动化试验**
+  - 尝试利用 Python 脚本配合 CrewAI 框架搭建内容初稿生成工具，探索多智能体协作在文本润色与流程规划中的可行性。
+
+### 3 月中旬
+- **RAG 问答与检索实验**
+  - 围绕面试题知识库搭建基于 ChromaDB、BM25 和重排序模型的本地 RAG 原型，测试混合检索链路在专业技术问答中的召回准确度。
+
+### 3 月上旬
+- **项目雏形与知识整理**
+  - 梳理自身在机器学习、计算机视觉及大模型开发中的学习笔记，汇总常见坑点与理解盲区，萌生搭建完整知识导航体系的构想。
+
+---
+
+## 站点现状概览
+
+| 维度 | 当前配置与规模 |
+| :--- | :--- |
+| **核心内容** | [AI 基础](/fundamentals/)（10 模块）、[AI 经典面试题](/interview/)（8 专题）、[大模型 100 讲](/llm-100/)（10 模块）、[前沿专题](/frontier/)（13+ 合集）、[资源导航](/resources/)（11 类） |
+| **离线资料** | 4 份核心合辑 PDF，支持公众号按关键词领取（见 [PDF 下载指引](/about/pdf-download.md)） |
+| **构建技术栈** | VuePress 2、vuepress-theme-hope、GitHub Actions、GitHub Pages |
+| **开源仓库** | [Easesgr/anyiai-docs](https://github.com/Easesgr/anyiai-docs) |

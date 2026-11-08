@@ -1,12 +1,13 @@
 <template>
   <div v-if="config?.locked" class="read-more-lock" ref="lockRef">
-    <div v-if="!unlocked" class="lock-cover" @click="showDialog = true">
+    <button v-if="!unlocked" type="button" class="lock-cover" @click="showDialog = true">
       <span class="lock-btn">阅读全文</span>
-    </div>
+    </button>
 
-    <Teleport to="body">
-      <div v-if="showDialog" class="dialog-mask" @click.self="showDialog = false">
-        <div class="dialog">
+    <!-- Keep the closed dialog out of SSR: body has no teleport target anchors. -->
+    <Teleport v-if="showDialog" to="body">
+      <div class="dialog-mask" @click.self="showDialog = false" @keydown="handleDialogKey">
+        <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" aria-labelledby="readmore-dialog-title">
           <button class="dialog-close" @click="showDialog = false" aria-label="关闭">
             <svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
           </button>
@@ -15,19 +16,12 @@
             <span class="header-icon">
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 5v6c0 5.5 3.5 10.4 8 11.5 4.5-1.1 8-6 8-11.5V5l-8-3z"/><path d="M9 12l2 2 4-4"/></svg>
             </span>
-            <h3>人机验证</h3>
+            <h3 id="readmore-dialog-title">阅读验证</h3>
           </div>
 
-          <p class="dialog-desc">为保障正常阅读体验，本站部分内容已开启一次性验证。验证后全站解锁。</p>
+          <p class="dialog-desc">输入公众号验证码，即可继续阅读。一次验证，全站通用。</p>
 
           <div class="qr-card">
-            <svg class="deco deco-scan" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10V4h6M28 10V4h-6M4 22v6h6M28 22v6h-6"/></svg>
-            <svg class="deco deco-chat" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 18a10 10 0 1 1 5 8.7L5 28l1.3-4A10 10 0 0 1 5 18z"/><path d="M20 26a8 8 0 1 0-4-6.9L15 22l3-.8A8 8 0 0 0 20 26z"/></svg>
-            <svg class="deco deco-spark s1" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
-            <svg class="deco deco-spark s2" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
-            <svg class="deco deco-spark s3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
-            <svg class="deco deco-spark s4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
-
             <div class="qr-wrap">
               <img :src="config.qrcode" alt="公众号二维码" class="qr-img" />
             </div>
@@ -54,6 +48,7 @@
               v-model="inputCode"
               type="text"
               placeholder="输入验证码"
+              aria-label="公众号验证码"
               @keyup.enter="verify"
             />
             <button class="unlock-btn" @click="verify">
@@ -61,7 +56,7 @@
               立即解锁
             </button>
           </div>
-          <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
+          <p v-if="errorMsg" class="error-msg" role="alert">{{ errorMsg }}</p>
 
           <p class="dialog-footer">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 5v6c0 5.5 3.5 10.4 8 11.5 4.5-1.1 8-6 8-11.5V5l-8-3z"/></svg>
@@ -96,6 +91,26 @@ const inputCode = ref("");
 const errorMsg = ref("");
 const copied = ref(false);
 const lockRef = ref(null);
+const dialogRef = ref(null);
+let lastFocused = null;
+watch(showDialog, async (open) => {
+  if (open) {
+    lastFocused = document.activeElement;
+    await nextTick();
+    dialogRef.value?.querySelector('input')?.focus();
+  } else {
+    lastFocused?.focus();
+  }
+});
+function handleDialogKey(event) {
+  if (event.key === 'Escape') showDialog.value = false;
+  if (event.key !== 'Tab') return;
+  const controls = [...(dialogRef.value?.querySelectorAll('button, input, a[href]') || [])];
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+}
 let observer = null;
 
 function setHidden(hidden) {
@@ -214,365 +229,41 @@ async function sha256(message) {
 </script>
 
 <style scoped>
-.lock-cover {
-  position: relative;
-  z-index: 20;
-  padding: 5rem 0 2rem;
-  text-align: center;
-  cursor: pointer;
-  margin-top: -10rem;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    var(--vp-c-bg) 60%,
-    var(--vp-c-bg) 100%
-  );
-}
-
-.lock-btn {
-  display: inline-block;
-  padding: 0.5rem 1.5rem;
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: #07c160;
-  background: transparent;
-  border: 1px solid #07c160;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.25s;
-}
-
-.lock-btn:hover {
-  background: #07c160;
-  color: #fff;
-}
-
-.dialog-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.55);
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  padding: 1rem;
-}
-
-.dialog {
-  position: relative;
-  background: var(--vp-c-bg, #fff);
-  border-radius: 20px;
-  width: 560px;
-  max-width: 100%;
-  padding: 28px 32px 22px;
-  box-shadow: 0 24px 60px rgba(2, 32, 18, 0.18),
-    0 4px 12px rgba(2, 32, 18, 0.06);
-}
-
-.dialog-close {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: #f1f3f5;
-  color: #6b7280;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s;
-}
-
-.dialog-close:hover {
-  background: #e5e7eb;
-  color: #111827;
-}
-
-.dialog-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.header-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: #e7f8ee;
-  color: #07c160;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.dialog-header h3 {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--vp-c-text-1, #111827);
-  letter-spacing: 0.5px;
-}
-
-.dialog-desc {
-  margin: 0 0 18px;
-  padding-left: 52px;
-  font-size: 13.5px;
-  color: var(--vp-c-text-2, #6b7280);
-  line-height: 1.6;
-}
-
-.qr-card {
-  position: relative;
-  border-radius: 16px;
-  padding: 22px 16px 18px;
-  background: linear-gradient(180deg, #f3fbf6 0%, #ecf9f1 100%);
-  border: 1px solid rgba(7, 193, 96, 0.22);
-  text-align: center;
-  overflow: hidden;
-}
-
-.deco {
-  position: absolute;
-  color: #07c160;
-  pointer-events: none;
-}
-
-.deco-scan {
-  width: 42px;
-  height: 42px;
-  top: 50%;
-  left: 28px;
-  transform: translateY(-50%);
-  opacity: 0.35;
-}
-
-.deco-chat {
-  width: 56px;
-  height: 56px;
-  top: 50%;
-  right: 26px;
-  transform: translateY(-50%);
-  opacity: 0.28;
-}
-
-.deco-spark {
-  width: 14px;
-  height: 14px;
-  opacity: 0.5;
-}
-
-.deco-spark.s1 {
-  top: 18px;
-  right: 32%;
-}
-.deco-spark.s2 {
-  bottom: 28%;
-  left: 24%;
-  width: 11px;
-  height: 11px;
-  opacity: 0.4;
-}
-.deco-spark.s3 {
-  top: 38%;
-  right: 14%;
-  width: 10px;
-  height: 10px;
-  opacity: 0.45;
-}
-.deco-spark.s4 {
-  bottom: 22px;
-  right: 30%;
-  width: 12px;
-  height: 12px;
-  opacity: 0.45;
-}
-
-.qr-wrap {
-  position: relative;
-  display: inline-block;
-  padding: 10px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(7, 193, 96, 0.1);
-}
-
-.qr-img {
-  display: block;
-  width: 160px;
-  height: 160px;
-  border-radius: 6px;
-  object-fit: cover;
-}
-
-.qr-text {
-  margin: 10px 0 0;
-  font-size: 14px;
-  color: var(--vp-c-text-1, #1f2937);
-  line-height: 1.8;
-}
-
-.qr-text em {
-  font-style: normal;
-  color: #07c160;
-  font-weight: 600;
-}
-
-.divider {
-  height: 1px;
-  margin: 18px 0 14px;
-  background-image: linear-gradient(
-    to right,
-    #d1d5db 50%,
-    transparent 50%
-  );
-  background-size: 8px 1px;
-  background-repeat: repeat-x;
-  background-position: left center;
-}
-
-.hint-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-  font-size: 13px;
-}
-
-.hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--vp-c-text-2, #6b7280);
-}
-
-.hint svg {
-  color: #07c160;
-}
-
-.copy-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  padding: 4px 6px;
-  color: #07c160;
-  font-size: 13px;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: background 0.2s;
-}
-
-.copy-btn:hover {
-  background: rgba(7, 193, 96, 0.08);
-}
-
-.input-row {
-  display: flex;
-  gap: 12px;
-  align-items: stretch;
-}
-
-.input-row input {
-  flex: 1;
-  min-width: 0;
-  padding: 0 16px;
-  height: 50px;
-  border: 1px solid var(--vp-c-divider, #e5e7eb);
-  border-radius: 12px;
-  font-size: 15px;
-  background: var(--vp-c-bg, #fff);
-  color: var(--vp-c-text-1, #1f2937);
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.input-row input::placeholder {
-  color: #9ca3af;
-}
-
-.input-row input:focus {
-  border-color: #07c160;
-  box-shadow: 0 0 0 3px rgba(7, 193, 96, 0.15);
-}
-
-.unlock-btn {
-  flex: 1.4;
-  height: 50px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: linear-gradient(180deg, #18b863 0%, #07c160 100%);
-  color: #fff;
-  border: none;
-  border-radius: 12px;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 6px 16px rgba(7, 193, 96, 0.28);
-  transition: transform 0.15s, box-shadow 0.2s, filter 0.2s;
-}
-
-.unlock-btn:hover {
-  filter: brightness(1.04);
-  box-shadow: 0 8px 20px rgba(7, 193, 96, 0.36);
-}
-
-.unlock-btn:active {
-  transform: translateY(1px);
-}
-
-.error-msg {
-  margin: 10px 0 0;
-  color: #e74c3c;
-  font-size: 13px;
-  text-align: center;
-}
-
-.dialog-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  margin: 16px 0 0;
-  font-size: 12px;
-  color: var(--vp-c-text-3, #9ca3af);
-}
-
-.dialog-footer svg {
-  color: #9ca3af;
-}
-
+.lock-cover { display: block; position: relative; z-index: 20; width: 100%; padding: 5rem 0 2rem; margin-top: -10rem; border: 0; text-align: center; cursor: pointer; background: linear-gradient(to bottom, transparent, var(--site-paper) 60%); }
+.lock-btn { display: inline-block; padding: 0.7rem 1.7rem; border: 1px solid var(--site-green); border-radius: 6px; color: var(--site-green-dark); background: var(--site-paper); font-size: 0.9rem; font-weight: 700; }
+.lock-cover:hover .lock-btn { color: white; background: var(--site-green); }
+.dialog-mask { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgb(23 35 30 / 50%); }
+.dialog { position: relative; width: 520px; max-width: 100%; max-height: calc(100dvh - 2rem); overflow-y: auto; padding: 2rem; border-radius: 14px; color: var(--site-ink); background: var(--site-paper); box-shadow: var(--site-elevation); }
+.dialog-close { position: absolute; top: 18px; right: 18px; display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 6px; color: var(--site-muted); background: var(--site-ground); cursor: pointer; }
+.dialog-close:hover { color: var(--site-green); background: var(--site-soft); }
+.dialog-header { display: flex; align-items: center; gap: 12px; margin-bottom: 1rem; }
+.header-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; color: var(--site-green); background: var(--site-soft); }
+.dialog-header h3 { margin: 0; color: var(--site-ink); font-size: 1.3rem; font-weight: 700; }
+.dialog-desc { margin: 0 0 1.25rem; color: var(--site-muted); font-size: 0.84rem; line-height: 1.8; }
+.qr-card { padding: 1.2rem; border-radius: 10px; background: var(--site-soft); text-align: center; }
+.qr-wrap { display: inline-block; padding: 8px; border-radius: 5px; background: white; }
+.qr-img { display: block; width: 144px; height: 144px; object-fit: contain; }
+.qr-text { margin: 0.55rem 0 0; color: #38513f; font-size: 0.83rem; line-height: 1.8; }
+.qr-text em { color: var(--site-green-dark); font-style: normal; font-weight: 700; }
+.divider { height: 1px; margin-block: 1.25rem; background: var(--site-line); }
+.hint-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.85rem; }
+.hint { display: inline-flex; align-items: center; gap: 6px; color: var(--site-muted); font-size: 0.76rem; }
+.hint svg { color: var(--site-green); }
+.copy-btn { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 5px; padding: 0.4rem; border: 0; color: var(--site-green-dark); background: transparent; font-size: 0.75rem; cursor: pointer; }
+.copy-btn:hover { background: var(--site-soft); }
+.input-row { display: flex; align-items: stretch; gap: 0.75rem; }
+.input-row input { box-sizing: border-box; flex: 1; min-width: 0; height: 48px; padding: 0 0.85rem; border: 1px solid #9ab2a1; border-radius: 6px; color: var(--site-ink); background: white; font-size: 0.88rem; }
+.input-row input::placeholder { color: var(--site-muted); }
+.unlock-btn { display: inline-flex; align-items: center; justify-content: center; flex: 1; gap: 6px; min-height: 48px; padding: 0.6rem; border: 0; border-radius: 6px; color: white; background: var(--site-green); font-size: 0.88rem; font-weight: 700; cursor: pointer; }
+.unlock-btn:hover { background: var(--site-green-dark); }
+.error-msg { margin: 0.75rem 0 0; color: #a53129; font-size: 0.8rem; }
+.dialog-footer { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 1rem 0 0; color: var(--site-muted); font-size: 0.66rem; line-height: 1.7; }
+.dialog-footer svg { flex: 0 0 auto; }
 @media (max-width: 520px) {
-  .dialog {
-    padding: 22px 18px 18px;
-    border-radius: 16px;
-  }
-  .dialog-header h3 {
-    font-size: 19px;
-  }
-  .dialog-desc {
-    padding-left: 0;
-  }
-  .qr-img {
-    width: 140px;
-    height: 140px;
-  }
-  .deco-scan,
-  .deco-chat {
-    display: none;
-  }
-  .input-row {
-    flex-direction: column;
-  }
-  .unlock-btn {
-    flex: none;
-  }
+  .dialog { padding: 1.4rem; }
+  .input-row { flex-direction: column; }
+  .input-row input { flex: 0 0 48px; }
+  .hint-row { gap: 0.5rem; }
+  .hint { font-size: 0.7rem; }
 }
 </style>

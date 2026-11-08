@@ -15,9 +15,13 @@ navbar-test.png
 .idea/
 .workbuddy/
 .claude/
+.impeccable/
+.kilo/
 .DS_Store
 *.bak
 *.log
+__pycache__/
+*.pyc
 
 # Credentials and private reading-code records
 .env

@@ -1,188 +1,230 @@
 ---
-title: RAG 的完整流程是怎么样的？
+title: 生产级 RAG 系统的完整流程与容灾降级怎么做？
 icon: mdi:file-tree-outline
 tag:
-  - RAG
-  - 完整流程
-  - 检索增强
+- RAG
+- 完整流程
+- 检索增强
+description: 从状态机流转、超时预算切分、向量检索回退到 BM25、重排降级至加权 RRF 及相关度门禁，详解生产 RAG 的高可用工程设计。
 ---
 
-# RAG 的完整流程是怎么样的？
+在面试中被问及“RAG 系统的完整流程”时，只回答线性的“切分-入库-检索-重排-组装-生成”通常只能证明了解基础 demo。面试官真正考察的，是系统面对**外部依赖抖动与不可用**时的工程防御能力：当向量数据库查询超时、重排模型显存排队、无相关文档召回或大模型限流时，系统如何避免请求雪崩并保证返回质量？
 
-这道题考的是 RAG 整个系统的全链路理解，从离线建库到在线查询生成的完整闭环。面试官想看你能不能把"文档怎么变成知识库、用户提问怎么得到准确回答"这件事讲清楚。
+在上一篇 [/interview/rag-interview/rag-complete-workflow.md](/interview/rag-interview/rag-complete-workflow.md) 中，我们梳理了 RAG 的基本流程。本文将视角切换到生产运行环境，结合具体的企业知识库查询示例，分析 RAG 的有限状态机流转、超时预算分配与降级分支设计。
 
-我从四个方面来讲：先说 RAG 分为哪两个大阶段，然后拆解离线建库的四步流程，接着讲在线查询生成的六步流程，最后说下 RAG 的演进路线和面试加分点。
-
----
-## RAG 两大阶段：离线建库和在线生成
-
-RAG 整个系统分成两个完全不同的阶段。
-
-**离线阶段**，就是提前把知识库建好。你有一堆文档，要让计算机能理解、能检索，这个过程是一次性的、预先完成的。就像图书馆先把书籍编目整理好，上架排好，用户来之前一切就绪了。
-
-**在线阶段**，是用户真的来提问了。系统要实时理解问题、去知识库里找相关答案、大模型生成回答。这部分每次查询都要做，对延迟敏感。
-
-[RAG 两阶段架构图]
-- 左侧离线阶段：文档 → 切分 → 向量化 → 入库
-- 右侧在线阶段：问题 → 检索 → 生成 → 回答
-
-记住这个划分很重要。面试的时候先把这个框架摆出来，面试官就知道你对 RAG 有全局认知了。
+![生产级 RAG 状态机与容灾降级全景图](/images/content-rebuild/e305f4a930e45f7a/cover.png)
 
 ---
+
+## 1. 核心口述答案：状态流转与三条降级分支
+
+面试官提问：“请描述生产环境下 RAG 系统的运行时流转；如果外部依赖发生高延迟或故障，你会如何设计降级？”
+
+建议口述结构如下：
+
+> “生产环境下的 RAG 流程不应写成单向无分支的线性脚本，而应作为具备明确状态流转与兜底分支的状态机来运行。主干流包含四个核心阶段：**查询预处理、混合检索、重排过滤、上下文生成**。
+>
+> 为保障系统 SLA 与接口可用性，我们在三个关键节点设计了超时控制与降级逻辑：
+> 1. **检索层降级**：通过并发执行向量检索（Dense）与关键词检索（BM25）。若向量数据库超时（如超过 150ms 预算），系统取消向量任务，降级仅使用已返回的 BM25 词法结果，保障基础召回；
+> 2. **重排层降级**：Cross-Encoder 重排服务若发生 HTTP 5xx 或处理超时，系统绕过深度模型计算，退回至基于排序位置的无参数加权互惠排名融合（Weighted RRF），用微秒级内存排序替代百毫秒级的模型推理；
+> 3. **相关度门禁拦截**：候选文档打分若低于预设门槛，直接流转至确定性拒答或人工客服分支，阻止低质、无关文档进入 Prompt，从输入端遏制模型幻觉。
+>
+> 全链路引入超时预算（Timeout Budget）传递，通过 context deadline 逐级扣减，防止单点耗时拖垮整个链路。”
+
+![核心口述体系：主干正常流转与三条容灾逃逸分支](/images/content-rebuild/e305f4a930e45f7a/fig-1.png)
+
+---
+
+## 2. 运行时状态机：请求全生命周期与超时预算
+
+我们以企业 HR 知识库中的真实查询为例：“**2024 年企业年金单位缴费比例是多少？**”。
+
+如果将检索和模型调用串联在无异常捕获的脚本中，一旦下游向量库执行分片重新均衡或网络丢包，整个 HTTP 请求就会挂起，最终导致网关 504 错误。生产系统的执行引擎通常定义如下状态转移表：
+
+| 状态名称 | 前置条件 | 正常迁移动作 | 异常/超时迁移 | 贯穿示例（年金缴费比例）处理 |
+| :--- | :--- | :--- | :--- | :--- |
+| `STATE_VALIDATION` | 收到客户端请求 | 参数与安全检查通过 $\rightarrow$ `STATE_REWRITE` | 参数非法 $\rightarrow$ 直接返回 400 终态 | 验证 Query 非空、符合字符长度要求 |
+| `STATE_REWRITE` | 请求合法 | 改写成功 $\rightarrow$ `STATE_RETRIEVAL` | 改写超时 $\rightarrow$ 降级使用原始 Query 并行检索 | 补全实体上下文，提取关键词“企业年金 单位缴费 比例” |
+| `STATE_RETRIEVAL` | Query 已就绪 | 检索完成 $\rightarrow$ `STATE_RERANK` | 向量库熔断 $\rightarrow$ 仅使用 BM25 词法召回结果；双路均超时 $\rightarrow$ 查静态缓存 | 向量库查语义嵌入，BM25 查精确词；若向量库超时，保留 BM25 结果 |
+| `STATE_RERANK` | 粗排候选集返回 | 计算重排得分 $\rightarrow$ `STATE_GATE` | 重排超时/宕机 $\rightarrow$ 退化至 RRF 粗排截断 Top-K | Cross-Encoder 打分；若服务超 300ms，按 RRF 顺序截取前 5 篇 |
+| `STATE_GATE` | 候选集已排序 | 最高分 $\ge$ 阈值 $\rightarrow$ `STATE_ASSEMBLY` | 最高分 $<$ 阈值 $\rightarrow$ `STATE_REFUSAL` | 检查前几篇文档是否包含年金相关政策，低于阈值直接拒答 |
+| `STATE_ASSEMBLY` | 检索文档过审 | 拼装提示词 $\rightarrow$ `STATE_STREAMING` | 上下文超长 $\rightarrow$ 动态滑动窗口截断后再组装 | 将年金管理办法相关条款组装进 Prompt，预留生成空间 |
+| `STATE_STREAMING` | Prompt 就绪 | 首字流式吐出 $\rightarrow$ `STATE_COMPLETED` | 模型限流/断流 $\rightarrow$ 切备用渠道或返回标准兜底文案 | 逐字推流生成答案，监听用户断开事件 |
+
 <ReadMoreLock />
 
-## 离线阶段：知识库构建四步流程
+![运行时状态转移图（FSM）：状态节点、转移事件与终态](/images/content-rebuild/e305f4a930e45f7a/fig-2.png)
 
-离线阶段干的事情，总结起来就是四步：**文档解析 → 文本切分 → 向量化 → 存入向量数据库**。
+### 链路超时预算（Timeout Budget）的传播机制
 
-### 第一步：文档解析
+在分布式链路中，各阶段共享全局超时预算。假设网关对外承诺的端到端 SLA 上限为 $2000\text{ ms}$：
 
-这一步是把各种格式的文档（PDF、Word、HTML）转成纯文本。PDF 解析是个坑，有些是扫描件还需要 OCR。结构化文档（表格、标题层级）解析更难，有时候需要特殊处理保留原文结构信息。
+$$\text{Budget}_{\text{Total}} = T_{\text{Rewrite}} + T_{\text{Retrieval}} + T_{\text{Rerank}} + T_{\text{LLM\_TTFT}} + T_{\text{Buffer}}$$
 
-实际工作中，这一步用 pdfminer、pymupdf 这些工具，或者直接调用商业 API。
-
-### 第二步：文本切分
-
-这是离线阶段最核心的环节。你的文档很长，但喂给向量化模型的输入有长度限制（通常 512 或 1024 个 token）。所以要把文本切成一块一块的，每块叫一个 **Chunk**。
-
-[RAG 两阶段架构图]
-
-切分策略有四种：
-
-**固定长度切分**。直接按字数或 token 数硬切，简单粗暴。问题很明显，一句话可能被拦腰砍断，语义不完整。
-
-**句子级别切分**。按句号、换行符切，语义完整性好一些。但有时候段落里的两句相关性很强，分开反而不好。
-
-**段落级别切分**。按段落切，语义完整性最好。但段落长短不一，长的可能超过模型限制。
-
-**递归切分**。先按大段落切，超长了就递归细分，结合了段落完整性和长度控制。
-
-还有一个重要概念：**父子分块策略**。大块叫 Parent Chunk，小块叫 Child Chunk。检索时用小块（精确），但找到小块后关联回大块（完整上下文）。
-
-打个比方：切分就像切蛋糕。蛋糕太大塞不进盘子，切太小又吃不出味道，还丢了奶油和夹心。好的切分策略是在保证能"吃"的前提下，保留最多的"风味"。
-
-### 第三步：向量化编码
-
-切好的每个 Chunk，用 Embedding 模型转成向量。这个向量就是这 chunk 的"语义身份证"，意思是意思相近的内容，向量也相近。
-
-常用模型有 BERT 系列、Text2Vec、Sentence-BERT 等等。向量维度通常是 768 或 1024 维。
-
-### 第四步：存入向量数据库
-
-向量 + 原始文本（metadata）一起存进向量数据库。常见选择是 Milvus、Pinecone、Chroma、FAISS 等等。
-
-这一步的关键是建立索引，决定了后面检索的速度。向量数据库会建 HNSW、IVF 之类的索引，加速最近邻搜索。
+当请求到达网关时生成全局 TraceID 与 Deadline 时间戳：
+1. 若 `STATE_REWRITE`（如调用小参数量模型进行扩展，见 [/interview/rag-interview/query-rewrite.md](/interview/rag-interview/query-rewrite.md)）消耗了 $300\text{ ms}$，传递给检索层的可用预算自动扣减为剩余值；
+2. 为检索层设定的单阶段超时上限为 $150\text{ ms}$。一旦超过此阈值，非阻塞客户端立即抛出超时信号并取消挂起的请求；
+3. 这样可防止上游各阶段将延迟挤压给最后的大模型生成阶段，确保留给大模型首字返回（TTFT）的时间始终在安全预算内。
 
 ---
 
-## 在线阶段：查询与生成六步流程
+## 3. 向量库检索超时与服务降级：回退到关键词索引
 
-用户来提问了，系统要实时响应。这个过程分六步：
+在基础教学中，检索常被简化为仅查询向量数据库（原理见 [/interview/rag-interview/vector-database.md](/interview/rag-interview/vector-database.md)）。但在生产环境中，向量数据库（如基于 HNSW 索引的节点）在大规模写入、内存压缩或节点垃圾回收时，P99 延迟可能出现抖动。
 
-**Query预处理 → 向量检索 → 混合检索 → Rerank重排 → Prompt组装 → LLM生成**
+![检索层超时熔断与双路降级拓扑](/images/content-rebuild/e305f4a930e45f7a/fig-3.png)
 
-### 第一步：Query 预处理
+### 双路检索与熔断判定
 
-用户输入的问题往往比较口语化、碎片化。预处理要做几件事：
+生产系统通常采用 [/interview/rag-interview/rag-hybrid-retrieval.md](/interview/rag-interview/rag-hybrid-retrieval.md) 讨论的双路并行召回架构。主路为稠密向量检索（Dense Retrieval），辅路为基于倒排索引的词法检索（BM25）：
 
-- 同义词替换，把"电脑"和"计算机"统一
-- 拼写纠错
-- 查询扩展，加上相关概念
-- 如果是多轮对话，还要把历史上下文拼进来
+1. **双路并发请求**：同时向向量服务与 BM25 服务发起异步调用，统一设置 $150\text{ ms}$ 的硬超时。
+2. **向量超时降级**：若向量检索超时未返回，系统断开其任务，直接使用已返回的 BM25 词法结果；对于包含专有名词的查询（如“企业年金”），BM25 往往能准确命中包含该专有名词的政策条例文档。
+3. **全路失败兜底**：若向量与 BM25 服务均不可用，系统状态机转移至兜底分支，查询预置的高频问答缓存（如 Redis 中的精确匹配问答对）；若未命中缓存，则转入确定性拒答，不继续向下游调用。
 
-### 第二步：向量检索
+```python
+import asyncio
+from typing import List, Dict, Any
 
-把预处理后的问题向量化，用余弦相似度或内积，在向量数据库里找最相似的 Top-K 个 Chunk。
-
-这里 K 的选择有讲究。太小可能漏掉相关内容，太大又引入噪声。常见取 5-20 个。
-
-### 第三步：混合检索
-
-向量检索有局限——它擅长语义相似，但搜"具体人名"、"精确数字"就不行了。
-
-**混合检索**就是同时跑向量检索和关键词检索（BM25），再把结果合并。关键词检索用倒排索引，精确匹配能力强。两路结果取并集或加权合并，兼顾语义和精确。
-
-这一步是 Advanced RAG 的标配优化。
-
-### 第四步：Rerank 重排
-
-[RAG 两阶段架构图]
-
-这是最容易被忽视但很关键的一步。
-
-向量检索是"粗排"，在海量向量里快速筛选候选集。它用的是 ANN（近似最近邻），追求速度，牺牲了一点精度。
-
-Rerank 是"精排"，把粗排出来的 Top-K 结果，再用 Cross-Encoder 重新打分排序。Cross-Encoder 把 query 和 document 一起喂进模型，输出相关性分数，比向量检索的两阶段编码准得多。
-
-类比一下：粗排像在图书馆书架上快速扫一遍，找到可能相关的 20 本书。精排像把这 20 本书一本本翻开，看目录、读前言，确认是不是真的相关。
-
-Rerank 模型常用 Cross-Encoder 架构，比如 Cross-Encoder/ms-marco 系列。代价是延迟高，所以只对粗排出来的少量结果做精排。
-
-### 第五步：Prompt 组装
-
-[RAG 两阶段架构图]
-
-拿到了最相关的几个 Chunk，把它们和问题拼成 Prompt。
-
-典型的 RAG Prompt 模板：
-
-
-基于以下参考内容回答问题。如果内容不相关，就说不知道。
-
-参考内容：
-{chunk1}
-{chunk2}
-{chunk3}
-
-问题：{query}
-
-
-这一步还要注意：Chunk 太多可能超过上下文窗口限制，所以要做截断或筛选。
-
-### 第六步：LLM 生成
-
-[RAG 两阶段架构图]
-
-把组装好的 Prompt 发给 LLM（大语言模型），生成最终回答。
-
-模型选择看场景：闭源 API（GPT-4、Claude）效果好但花钱，自部署（Llama、Qwen）省钱但效果打折。
+async def hybrid_retrieval_with_fallback(
+    query: str, 
+    vector_client, 
+    bm25_client, 
+    timeout_ms: int = 150
+) -> Dict[str, Any]:
+    """
+    并发执行稠密向量检索与稀疏 BM25 检索，包含超时截断与降级处理
+    """
+    timeout_sec = timeout_ms / 1000.0
+    
+    dense_task = asyncio.create_task(vector_client.search(query, top_k=20))
+    sparse_task = asyncio.create_task(bm25_client.search(query, top_k=20))
+    
+    dense_results: List[Dict[str, Any]] = []
+    sparse_results: List[Dict[str, Any]] = []
+    
+    # 并发等待双路结果，受统一超时预算控制
+    done, pending = await asyncio.wait(
+        [dense_task, sparse_task],
+        timeout=timeout_sec
+    )
+    for task in pending:
+        task.cancel()
+    
+    if dense_task in done and not dense_task.cancelled():
+        try:
+            dense_results = dense_task.result()
+        except Exception:
+            dense_results = []
+    
+    if sparse_task in done and not sparse_task.cancelled():
+        try:
+            sparse_results = sparse_task.result()
+        except Exception:
+            sparse_results = []
+    
+    # 根据各路召回情况确定输出状态
+    if dense_results and sparse_results:
+        return {"status": "NORMAL_HYBRID", "dense": dense_results, "sparse": sparse_results}
+    elif sparse_results:
+        return {"status": "DEGRADED_SPARSE_ONLY", "dense": [], "sparse": sparse_results}
+    elif dense_results:
+        return {"status": "DEGRADED_DENSE_ONLY", "dense": dense_results, "sparse": []}
+    else:
+        return {"status": "RETRIEVAL_EXHAUSTED_FALLBACK", "dense": [], "sparse": []}
+```
 
 ---
 
-## RAG 演进路线和面试加分点
+## 4. 重排模型不可用时的排序退化：从 Cross-Encoder 到加权 RRF
 
-[RAG 两阶段架构图]
+重排（Rerank）服务（详细原理见 [/interview/rag-interview/rag-rerank.md](/interview/rag-interview/rag-rerank.md)）多基于 Cross-Encoder 架构。由于需要将 `Query` 与 `Document` 拼接后输入模型做全注意力交互，计算复杂度为序列长度的平方级。重排服务一旦并发积压或发生显存溢出（OOM），往往是整条链路中最容易超时的环节。
 
-RAG 技术经历了三代进化：
+![重排模型不可用时的拓扑退化机制](/images/content-rebuild/e305f4a930e45f7a/fig-4.png)
 
-**Naive RAG**。最基础的形态：切分 → 向量化 → 存库 → 检索 → 组装 → 生成。有什么用什么，没有优化，容易出现检索质量差、幻觉多的问题。
+### 降级方案：切换至加权互惠排名融合（Weighted RRF）
 
-**Advanced RAG**。在 Naive 基础上加优化：Query 改写、混合检索、Rerank、结果缓存、迭代检索。看病先做检查，精准定位再开药。
+当 `STATE_RERANK` 检测到 Cross-Encoder 接口返回 5xx 错误、连接池耗尽或处理耗时超过预算（如 $300\text{ ms}$）时，系统应跳过深度模型计算，切换至无参数的加权互惠排名融合（Weighted RRF，参考 [/interview/rag-interview/hybrid-retrieval.md](/interview/rag-interview/hybrid-retrieval.md)）：
 
-**Agentic RAG**。更进一步的智能化：让 Agent 决定要不要 RAG、查哪个知识库、查几次、结果够不够用。相当于给 RAG 装上了大脑，可以自主决策。
+$$RRF\_Score(d \in D) = \sum_{m \in M} \frac{w_m}{k + r_m(d)}$$
 
-面试加分点说几个：
+其中：
+- $M$ 表示当前可用的召回通路集合（例如 Dense 路与 Sparse 路）；
+- $w_m$ 是通路 $m$ 的权重（例如当测试集上向量检索质量更高时可设 $w_{\text{dense}}=1.5, w_{\text{sparse}}=1.0$）；
+- $r_m(d)$ 是文档 $d$ 在该通路排序结果中的名次（从 $1$ 开始计数）；
+- $k$ 是平滑常数（在信息检索实践中通常取 $60$），用于避免前几名排位分数差过大。
 
-**Hybrid Search**。向量检索 + BM25 双路并行的思路，体现你对检索优化的理解。
+**算例对照（假设 $k=60$）：**
+- 文档 A（《企业年金实施办法》）在 Dense 路排第 1 名，在 Sparse 路排第 4 名：
+  $$RRF(A) = \frac{1.5}{60 + 1} + \frac{1.0}{60 + 4} = \frac{1.5}{61} + \frac{1.0}{64} \approx 0.02459 + 0.01563 = 0.04022$$
+- 文档 B（《年金方案备案指南》）在 Dense 路排第 8 名，在 Sparse 路排第 1 名：
+  $$RRF(B) = \frac{1.5}{60 + 8} + \frac{1.0}{60 + 1} = \frac{1.5}{68} + \frac{1.0}{61} \approx 0.02206 + 0.01639 = 0.03845$$
 
-**Rerank 模型选型**。Cross-Encoder 的原理和使用场景，面试官经常追问。
-
-**评估指标**。RAGAS、Recall@K、MRR、幻觉率这些指标，反映你对系统效果衡量的认知。
-
----
-
-## 面试怎么答
-
-**基础版**（可以直接背）：
-
-RAG 分离线建库和在线查询两个阶段。离线阶段有四步：文档解析、文本切分、向量化、存入向量库。其中文本切分最关键，常见策略有固定长度、句子级、段落级、递归切分，还有父子分块保证上下文完整性。在线阶段有六步：Query 预处理、向量检索、混合检索、Rerank 重排、Prompt 组装、LLM 生成。Rerank 用 Cross-Encoder 对粗排结果精排，是提升检索质量的关键环节。
-
-**加分版**（拉开差距）：
-
-基础流程之外，我了解几个优化点。混合检索结合向量检索和 BM25，兼顾语义和精确匹配。Rerank 用 Cross-Encoder 精排，比向量检索的两阶段编码更准。RAG 从 Naive RAG 演进到 Advanced RAG 再到 Agentic RAG，核心区别是检索策略的智能程度。我之前做过一个 RAG 系统，用的是递归切分加父子分块，配合混合检索加 Rerank，召回率从 60% 提到了 82%。
+依据加权 RRF 得分排序，文档 A 排在文档 B 前面。计算过程只涉及简单的排位倒数求和与数组排序，耗时通常在 $1\text{ ms}$ 以内。虽然相比 Cross-Encoder 损失了部分深层语义交互收益，但在重排节点异常时能快速产出候选集，保住下游生成链路。
 
 ---
 
-## 一句话总结
+## 5. 相关度门禁与拒答拦截：阻断低质上下文
 
-RAG 就是把文档离线切成 chunk 并向量化存储，查询时实时检索相关 chunk 并让大模型基于 context 生成回答。
+很多初学者系统无论检索到什么文档，都会直接拼装进 Prompt 送给模型。这种做法在遇到知识库未收录的问题时极易导致严重幻觉（参见 [/interview/rag-interview/rag-hallucination.md](/interview/rag-interview/rag-hallucination.md)）。
+
+![相似度阈值判定与拒答/兜底分支分流机制](/images/content-rebuild/e305f4a930e45f7a/fig-5.png)
+
+### 为什么不能仅靠 Prompt 里的“不知道就说不知道”？
+
+在 Prompt 中加入“如果参考资料中没有提及，请回答不知道”，并不能完全杜绝幻觉：
+1. **成本浪费**：无论模型是否拒答，拼装进入 Prompt 的低质文档都已产生网络传输与 Prefill 阶段的 Token 计算开销；
+2. **模型注意力偏置**：大语言模型具有顺应提问的倾向，若上下文包含哪怕弱相关的干扰词句，模型也可能捕获到片面线索并推测编造事实。
+
+### 门禁逻辑实现
+
+在 `STATE_GATE` 阶段应设置两道拦截标准：
+- **最高分数硬门禁**：若正常经过 Cross-Encoder 重排，输出的归一化相关度分数最高值仍低于安全阈值（例如经过 Sigmoid 映射后的相关分 $< 0.40$）；或在重排降级场景下，向量相似度最高值低于硬阈值（如余弦相似度 $< 0.60$），系统判定知识库内无对应事实基础。
+- **分流动作**：
+  - **确定性合规拒答**：状态机立即终止向大模型流转，直接返回配置好的静态应答（如：“知识库未检索到关于 2024 年企业年金缴费比例的有效制度，请核对提问或咨询人力资源部相关专员”）。端到端耗时在检索完成后即刻结束，不产生大模型生成调用成本；
+  - **开放域兜底（可选配置）**：若业务允许开放生成，系统需明确剥离“企业内部知识库”的认证标识，并在回复前追加声明：“以下内容来自模型公开知识，非公司正式制度认证”，避免误导业务决策。
+
+---
+
+## 6. 生产可观测性与验收指标
+
+讨论生产架构时，不能停留在“系统会降级”的定性描述，需要结合具体的工程监控指标（评估方法可参考 [/interview/rag-interview/rag-evaluation.md](/interview/rag-interview/rag-evaluation.md)）：
+
+![生产级可观测指标看板](/images/content-rebuild/e305f4a930e45f7a/fig-6.png)
+
+### 关键指标定义与基线设定
+
+1. **端到端 P99 延迟分位线**：
+   - **目标示例**：在正常状态下，从用户发起请求到首字流式输出（TTFT）的 P99 延迟控制在 $1500\text{ ms} \sim 1800\text{ ms}$ 区间；
+   - **验收行为**：当对向量数据库施加压力导致其超时率升高时，由于断路器和降级逻辑生效，端到端 P99 延迟应收敛在降级路径上限（如 BM25 兜底路径下 P99 应保持在 $800\text{ ms}$ 以内），不得无限排队累积。
+2. **降级触发率（Fallback Trigger Rate）**：
+   $$\text{Fallback Rate} = \frac{\text{降级请求数}}{\text{总请求数}} \times 100\%$$
+   - **稳态监控**：在正常网络与负载下，降级触发率通常应低于 $0.1\%$。若该指标短时间内上升至 $2\%$ 以上，说明向量检索或重排服务存在网络抖动、分片异常或硬件资源瓶颈。
+3. **拒答精确率（Refusal Precision）**：
+   - 在评测集中准备一定比例知识库范围外的测试样本。系统在 `STATE_GATE` 阶段应将这些样本精准拦截。若发生拒答，必须确认其确实属于未收录或弱相关问题，而非正常语义误杀。
+4. **降级召回衰减度（Recall@K Drop Rate）**：
+   - 评估重排服务不可用、退化为 RRF 排序时，Top-5 召回中相关文档的衰减幅度。通常要求 RRF 降级路径下的相关文档召回率相较正常重排路径的衰减控制在可接受范围（如不超过 $10\% \sim 15\%$），以验证粗排与融合算法的底线承载能力。
+
+---
+
+## 7. 面试深度追问与常见误区
+
+### 追问 1：如果大模型生成阶段客户端中途断开连接，系统如何处理？
+
+**解答**：
+流式传输通常基于 HTTP chunked 或 SSE（Server-Sent Events）。网关服务应监听客户端连接关闭信号：
+- 一旦检测到客户端断开（如用户关闭了标签页），网关应通过 `context.cancel()` 向上游大模型推理引擎发送中断信号；
+- 推理后端收到信号后停止该请求后续 token 的生成计算，并释放对应的 KV Cache 显存资源，防止算力空转浪费；
+- **资源与计费边界**：中断只能阻止后续未生成 Token 的计算开销。对于中断前已经完成的 Prefill 输入阶段以及已经流式吐出的 Token，底层推理服务或第三方 API 通常仍会正常计量计费，实际消耗的算力与 Token 配额不会无条件全额释放或返还。
+
+### 追问 2：为什么有些团队不用向量相似度，而优先用重排分数做门禁拦截？
+
+**解答**：
+双塔向量模型（Bi-Encoder）将 Query 与 Document 独立编码为定长向量，捕捉的是粗粒度的全局语义空间相似度，对“不缴费”、“全额缴费”、“缴费比例”等局部否定词或细微修饰词不够敏感。而 Cross-Encoder 重排模型对 Query 和 Document 进行完整注意力交互，更能捕获细粒度的逻辑匹配关系。因此，使用 Cross-Encoder 的输出分数做门禁拦截，其误杀率和漏杀率通常显著低于双塔向量余弦相似度。
+
+### 常见误区辨析
+
+- **误区一**：“向量库挂掉时，直接让大模型根据自带的通用预训练知识来回答即可。”
+  - **辨析**：企业私有知识库（如内部政策、技术方案、财务报表）通常从未出现在通用预训练数据中。此时让模型自由发挥，极易产生具有欺骗性的幻觉。正确的做法是降级为关键词检索；若检索全部失效，应直接合规拒答并提供人工支持入口。
+- **误区二**：“重排模型太耗时，高可用系统为了保证低延迟绝对不能引入重排。”
+  - **辨析**：重排能显著改善进入生成阶段的文档相关性。在工程上，可以通过“控制候选集规模（如仅重排 Top-15）+ 设置硬超时（如 250ms）+ 超时退化至 RRF”的方式来平衡效果与可用性，而非直接放弃重排。

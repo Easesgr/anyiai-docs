@@ -3,6 +3,13 @@ import { hopeTheme } from "vuepress-theme-hope";
 import { zhNavbar } from "./navbar/index.js";
 import { zhSidebar } from "./sidebar/index.js";
 
+const searchKeywords = (value: unknown): string[] =>
+  typeof value === "string"
+    ? [value]
+    : Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+
 export default hopeTheme({
   hostname: "https://www.anyiai.cc",
   titleSeparator: " | ",
@@ -12,7 +19,17 @@ export default hopeTheme({
     name: "安逸Ai",
   },
 
-  logo: "/logo.png",
+  logo: "/logo.svg",
+
+  navbarLayout: {
+    start: ["SiteBrand"],
+    center: ["Links"],
+    end: ["Search", "ResourceLink"],
+  },
+
+  titleIcon: false,
+  breadcrumbIcon: false,
+  navbarAutoHide: "none",
 
   darkmode: "disable",
 
@@ -88,13 +105,9 @@ export default hopeTheme({
     tasklist: true,
     vPre: true,
 
-    // uncomment these if you need TeX support
-    // math: {
-    //   // install katex before enabling it
-    //   type: "katex",
-    //   // or install @mathjax/src before enabling it
-    //   type: "mathjax",
-    // },
+    math: {
+      type: "katex",
+    },
 
     // install chart.js before enabling it
     // chartjs: true,
@@ -133,7 +146,13 @@ export default hopeTheme({
       assets: "iconify",
     },
 
-    slimsearch: true,
+    slimsearch: {
+      suggestion: false,
+      customFields: [
+        { getter: (page) => searchKeywords(page.frontmatter.category), formatter: "分类：$content" },
+        { getter: (page) => searchKeywords(page.frontmatter.tag), formatter: "标签：$content" },
+      ],
+    },
 
     // 为每个页面生成独立的首选地址，避免所有文章被错误归并到首页。
     seo: {
@@ -203,4 +222,4 @@ export default hopeTheme({
     //   },
     // },
   },
-});
+}, { custom: true });

@@ -2,129 +2,176 @@
 title: Encoder-only、Decoder-only 和 Encoder-Decoder 架构有什么区别？
 icon: mdi:source-branch
 tag:
-  - Transformer架构
-  - BERT
-  - GPT
-  - T5
+- Transformer架构
+- BERT
+- GPT
+- T5
+description: 通过一个具体任务对比 Transformer 三大变体的注意力掩码构造、张量流向、推理 KV Cache 差异及工程选型依据。
 ---
 
-![](/images/transformer-arch/encoder-decoder-variants_cover.png)
+![架构拓扑演化封面图：展示三种变体结构的注意力连接形态](/images/content-rebuild/df0f8eb5702da85f/cover.png)
 
-# Encoder-only、Decoder-only 和 Encoder-Decoder 到底有什么区别？
+在完成 [Multi-Head Attention 机制](/fundamentals/transformer-arch/multi-head-attention.md) 与 [位置编码原理](/fundamentals/transformer-arch/positional-encoding.md) 的学习后，我们已经熟悉了缩放点积注意力的核心计算形式：
 
-上回聊完位置编码，你可能会有个疑问：Transformer 那些注意力机制听起来挺厉害，但实际用的时候，怎么有的模型只用来理解文本，有的模型却能从头生成新内容？这就涉及到 Transformer 的三种架构选择了。
+$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}} + M\right)V$$
 
-同样是 Transformer，为什么 BERT 刷阅读理解题特别溜，GPT 能写小说，而 T5 翻译文章最在行？答案就藏在它们架构设计的差异里。
+原始论文《Attention Is All You Need》提出的是一个包含编码器和解码器的双塔模型，用于机器翻译。然而在后续发展中，社区逐渐分化出三类主流架构：**Encoder-only（纯编码器）**、**Decoder-only（纯解码器）** 以及 **Encoder-Decoder（编码器-解码器）**。
 
-## 三种架构，长什么样？
+决定它们差异的核心不是堆叠层数的多少，而是两件事：**注意力掩码矩阵 $M$ 如何控制信息可见性**，以及**张量在网络各模块间的流动路径**。
 
-先把目光放到这三种架构的基本构造上。
+---
 
-**Encoder-only**，顾名思义，只有编码器。它的代表作是 BERT 系列。你给它一段文字，它能理解这段文字说了什么，但不会往外吐东西。
+## 一个贯穿例子：处理同一文本时的三种视角
 
-**Decoder-only**，刚好反过来，只有解码器。GPT 系列就是典型。它不挑输入，想写什么就写什么，一个字一个字往外蹦。
+假设我们有一句文本：`今天 天气 很好`，分词后包含 3 个 Token。
 
-**Encoder-Decoder**，两边都有，既有编码器也有解码器。T5 和 BART 走的是这条路。先把东西吃进去消化，再把自己理解的东西说出来。
+1. **场景 A：情感分类（序列理解）**
+   * 目标是判断整句话是正面还是负面。输入序列在计算前已经完整已知。模型应该在处理 `天气` 时同时参考前后的 `今天` 和 `很好`。
+   * **对应架构**：**Encoder-only**。所有位置彼此可见，无时序约束，单次前向传播输出特征。
+2. **场景 B：句子续写（自由文本生成）**
+   * 目标是接着往下写出 `，适合散步`。在模型预测第 4 个词时，它只能依据前 3 个词。在训练时，即使整个句子都放在显存里，也必须强行屏蔽未来词，防止模型“抄近道”。
+   * **对应架构**：**Decoder-only**。使用严格的因果掩码，模型只能单向关注自身及历史 Token。
+3. **场景 C：机器翻译（非对称序列转换）**
+   * 目标是将英文 `Good weather today` 翻译为中文 `今天天气很好`。英文输入句子是完整已知的，需要全局双向理解；中文输出句子则是逐词生成的，生成时既需要关注已经生成的中文前文，又需要随时回查英文源句。
+   * **对应架构**：**Encoder-Decoder**。编码器双向处理英文，解码器单向自回归生成中文，并通过交叉注意力查阅编码器的输出。
 
-![Transformer三种架构基本结构对比图，展示Encoder-only、Decoder-only、Encoder-Decoder的模块组成差异](/images/transformer-arch/20260606_204541_092992_01.png)
+![三种拓扑结构全景对比图：展示双向全连接、因果单向与双塔交叉结构](/images/content-rebuild/df0f8eb5702da85f/fig-1.png)
 
-我打个比方。Encoder 像是"听力理解"，Decoder 像是"口头表达"。Encoder-only 是个聋哑人，听得懂但说不出。Decoder-only 是个文盲，脑子里有东西但不会写。Encoder-Decoder 才是个正常人，先听再说。
+下表汇总了三者的结构特征与计算模式：
 
-这个比喻不精准，但能帮你快速建立直觉。
+| 架构类型 | 包含子模块 | 自注意力掩码形态 | 是否包含 Cross-Attention | 输入与输出时序关系 | 典型代表 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Encoder-only** | 仅 Encoder 堆叠 | 全可见（无因果限制） | 否 | 输入已知，单步前向输出表征 | BERT, RoBERTa |
+| **Decoder-only** | 仅 Decoder 堆叠 | 因果下三角（屏蔽未来） | 否 | 自回归，逐 Token 向后预测 | GPT 系列, LLaMA |
+| **Encoder-Decoder** | Encoder + Decoder | Encoder 全可见；Decoder 因果 | 是（Decoder 查询 Encoder） | 源序列全局编码，目标端逐步解码 | 原始 Transformer, T5, BART |
+
 <ReadMoreLock />
 
-## Encoder 在干什么？
+---
 
-说说编码器这边。它的工作是什么？
+## Encoder 结构：双向自注意力与全可见掩码
 
-编码器的核心任务是把输入文本变成一个"理解过的表示"。说白了就是把文字嚼碎了，消化成机器能懂的形式。
+在纯编码器架构中，所有层的自注意力都允许全向交互。给定序列输入 $X \in \mathbb{R}^{N \times d}$，其线性投影得到：
 
-它怎么做到的？靠自注意力机制。你可能还记得上篇位置编码里提到的注意力分数——每个词都能看看上下文里其他词跟自己的关系。
+$$Q = X W_Q, \quad K = X W_K, \quad V = X W_V$$
 
-BERT 训练的时候用的是一种叫"掩码语言模型"的方法。简单说就是完形填空：把一句话里几个词挖掉，让模型猜被挖掉的是什么。
+在没有批处理填充（Padding）的理想情况下，掩码矩阵 $M$ 中的元素全部为 0：
 
-"今天天气真好啊"变成"今天天气真[MASK]"。模型需要根据上下文推断出 [MASK] 位置应该是"好"。
+$$M_{i,j} = 0 \quad (\forall i, j \in [1, N])$$
 
-![BERT掩码语言模型训练过程图，展示输入句子遮蔽部分词汇后，模型预测被遮蔽词的工作方式](/images/transformer-arch/20260606_204541_235392_01.png)
+![Encoder 双向自注意力与全可见掩码机制图](/images/content-rebuild/df0f8eb5702da85f/fig-2.png)
 
-这个过程让 BERT 学会了什么？学会了理解。学会了看到"今天天气真"，知道后面大概率跟的是"好"而不是"坏"。学会了"苹果"在"吃苹果"里是水果，在"苹果公司"里是公司。
+### 信息流动与计算特征
 
-BERT 不生成内容，它只是把文本消化成向量表示。这个表示包含了上下文信息，叫上下文表示。
+* **双向上下文整合**：在计算第 $i$ 个位置的输出向量时，它的 Query 向量与所有位置（$j \in [1, N]$）的 Key 计算相似度。`Token_1` 可以直接关注 `Token_3`，`Token_3` 也可以直接关注 `Token_1`。
+* **Padding Mask 的作用**：当多条不同长度的句子打包为一个批次（Batch）计算时，短句后方会补齐占位的 `<pad>` 标记。为了防止有效词将注意力权重分给无意义的占位符，工程上会在掩码矩阵的对应列填入极大负数（如 $-10^4$ 或 $-\infty$），使得经过 Softmax 后的权重精确为 0。
+* **计算效率**：单次前向传播即可计算出所有 Token 的高阶表征，适合文本分类、特征抽取和密集检索向量生成。
 
-## Decoder 的独门绝技
+---
 
-解码器这边有什么不一样？
+## Decoder 结构：因果掩码防止未来信息泄露
 
-关键在于那个 Mask。中文叫掩码或者遮罩。
+自回归文本生成的基本规则是：预测第 $t$ 个词时，模型只能依赖前 $t-1$ 个词。然而，如果每次只输入前 $t-1$ 个词，训练时序列长度为 $N$ 的句子就需要执行 $N$ 次前向传播，效率极低。
 
-解码器在处理输入的时候，会把"未来的内容"遮住。什么意思？
+为了在训练阶段能够像 Encoder 一样**一次性并行输入整条句子**，Decoder 引入了**因果掩码（Causal Mask）**。它在数学上表现为一个上三角被屏蔽的矩阵。
 
-当你让 GPT 写"今天天气真好"这句话的时候，它生成第一个字"今"的时候，只能看到"今"自己。生成第二个字"天"的时候，只能看到"今天"这两个字。生成第三个字"天"的时候，只能看到"今天天气"。
+![Decoder 因果掩码矩阵相加与 Softmax 截断过程](/images/content-rebuild/df0f8eb5702da85f/fig-3.png)
 
-它永远看不到自己还没生成的东西。这叫自回归生成。
+### 因果掩码的计算过程
 
-![Decoder Mask机制与自回归生成示意图，展示下三角Mask矩阵和GPT逐步生成token的过程](/images/transformer-arch/20260606_204541_583488_01.png)
+设输入序列长度为 $N$，注意力未归一化得分矩阵为 $S = \frac{QK^T}{\sqrt{d_k}} \in \mathbb{R}^{N \times N}$。因果掩码矩阵 $M \in \mathbb{R}^{N \times N}$ 定义为：
 
-你可以把这个过程想象成闭卷考试。学生只能根据已经写下的答案继续往下写，不能偷看书本后面的内容。
+$$M_{i,j} = \begin{cases} 0 & \text{if } j \le i \\ -\infty & \text{if } j > i \end{cases}$$
 
-为什么要这样设计？因为生成任务需要这个特性。写文章的时候，你不可能先看到整篇文章再动笔。你是一个字一个字往外蹦的。
+以序列长度 $N=4$ 为例，掩码矩阵的具体取值为：
 
-Decoder 的训练方式也因此不同。它用的是"下一个词预测"。给定"今天天气真"，预测下一个词是什么。给对了就加分，给错了就调整参数。
+$$M = \begin{pmatrix} 0 & -\infty & -\infty & -\infty \\ 0 & 0 & -\infty & -\infty \\ 0 & 0 & 0 & -\infty \\ 0 & 0 & 0 & 0 \end{pmatrix}$$
 
-这个训练方式看起来简单，但当数据量足够大、模型规模足够大的时候，涌现出了惊人的能力。GPT 能写代码、写小说、回答问题，都是从这个简单的训练目标里长出来的。
+将其直接加到得分矩阵上：$S_{\text{masked}} = S + M$。在执行 Softmax 归一化时：
 
-## 三种架构，各有所长
+$$A_{i,j} = \frac{\exp(S_{i,j} + M_{i,j})}{\sum_{k=1}^N \exp(S_{i,k} + M_{i,k})}$$
 
-那么问题来了：到底该用哪个？
+当 $j > i$（未来位置）时，$S_{i,j} + M_{i,j} = -\infty$，此时 $\exp(-\infty) = 0$。最终得到的注意力权重矩阵呈现标准的下三角形式：
 
-**Encoder-only 擅长理解分析任务。** 情感分类、命名实体识别、文本分类，这些任务的特点是给你一段话，你给个判断。BERT 刷这些题特别在行。
+$$A = \begin{pmatrix} 1.0 & 0 & 0 & 0 \\ a_{2,1} & a_{2,2} & 0 & 0 \\ a_{3,1} & a_{3,2} & a_{3,3} & 0 \\ a_{4,1} & a_{4,2} & a_{4,3} & a_{4,4} \end{pmatrix}$$
 
-**Decoder-only 擅长创造性生成任务。** 对话、写作、代码生成，你需要模型帮你产出新内容。GPT 就是干这个的。
+借助因果掩码，模型在训练时可以利用 **Teacher Forcing** 一次性计算所有位置的下一个词预测损失；在推理时则按步串行吐字。
 
-**Encoder-Decoder 擅长"输入到输出"的任务。** 机器翻译是典型，把中文翻译成英文。文本摘要也是，把长文章压缩成短概括。还有问答，给个问题从文档里找答案。
+---
 
-![三种架构代表模型与擅长任务对照图，包含BERT、GPT-2/3、T5的典型应用场景](/images/transformer-arch/20260606_204607_949632_01.png)
+## Encoder-Decoder 连接机制：Cross-Attention 的张量流动
 
-再打个比方。Encoder-only 像是个分析师，读完一堆材料给你出结论。Decoder-only 像是个作家，脑子里有故事要讲给你听。Encoder-Decoder 像是个翻译官，先听你说什么，再用另一种方式表达出来。
+Encoder-Decoder 架构由两组子网络组成。源序列经过 Encoder 得到最终表征 $H_{\text{enc}}$；目标序列则输入 Decoder 逐步生成。连接这两个子网络的枢纽是 **交叉注意力（Cross-Attention）**。
 
-它们不是谁比谁强的问题，是术业有专攻。
+在标准 Encoder-Decoder 的解码层中，包含两个串联的注意力计算：
+1. **Masked Causal Self-Attention**：解码端已生成 Token 之间的自注意力，使用因果掩码防止偷看后文。
+2. **Cross-Attention**：将解码端当前生成的语义作为查询，去编码端提取对应的输入信息。
 
-## 为什么 GPT 突然这么火？
+![Cross-Attention 张量投影与跨序列交互拓扑图](/images/content-rebuild/df0f8eb5702da85f/fig-4.png)
 
-你有没有发现，这几年最出风头的都是 Decoder-only 的模型？ChatGPT、Claude、Gemini，清一色是纯解码器架构。
+### Query、Key、Value 的来源与张量维度
 
-为什么？
+在 Cross-Attention 中，张量的输入来源被解耦：
 
-首先，Decoder-only 的资源利用率更高。Encoder-Decoder 要跑两套注意力机制，一套编码一套解码。Decoder-only 只有一套，处理开放式生成任务的时候更省。
+* **Query（$Q$）**：来自 Decoder 前一层对目标序列的隐层输出，形状为 $(L_{\text{target}}, d)$。
+* **Key（$K$）与 Value（$V$）**：来自 Encoder 顶层对源序列的最终输出 $H_{\text{enc}}$，形状均为 $(L_{\text{source}}, d)$。
 
-其次，Decoder-only 在大规模训练后展现出了一种有趣的能力：涌现。模型不只能写文章，微调一下之后做分类任务也能达到 Encoder-only 的水平。
+点积计算得到的注意力矩阵形状为：
 
-也就是说，一个"作家"稍加训练也能当"分析师"用。
+$$S_{\text{cross}} = \frac{Q K^T}{\sqrt{d_k}} \in \mathbb{R}^{L_{\text{target}} \times L_{\text{source}}}$$
 
-反过来呢？Encoder-only 能微调成生成模型吗？能，但效果不如专门的 Decoder。分析能力比较好转，生成能力比较难学。
+这个矩阵的行数对应当前已解码的目标词数，列数对应输入源句的词数。它表示**每一个正在生成的目标词，应该在源句的各个词上分配多少权重**。
 
-这就解释了为什么大家都在卷 Decoder-only。一套架构能做的事越来越多，为什么还要两套？
+需要特别指出的是，Cross-Attention **没有因果掩码限制**。每一个生成步都可以查阅源句的全部 Token（仅需屏蔽源句本身的 Padding 占位符）。
 
-## 实战指南：怎么选？
+---
 
-好，理论讲完了。来点实在的。
+## 推理阶段的状态维护：KV Cache 的行为差异
 
-你的任务是**文本分类、情感分析、实体识别**？选 Encoder-only。用 BERT、RoBERTa 这些模型。直接拿过来微调，几个小时就能出效果。
+在自回归推理（逐词生成）阶段，模型每生成一个新 Token，都需要将其拼接到历史序列中参与下一步计算。由于自注意力中历史 Token 的线性投影在后续计算中数值不变，为了避免 $O(N^2)$ 的重复矩阵相乘，系统会引入 **KV Cache（键值缓存）**。
 
-你的任务是**对话、写作、代码生成**？选 Decoder-only。用 GPT、LLaMA 这些模型。准备好大量算力和数据，它会给你惊喜。
+不同架构在推理时对 KV Cache 的维护方式截然不同：
 
-你的任务是**翻译、摘要、问答**？选 Encoder-Decoder。用 T5、BART 这些模型。输入输出有明确对应关系的，找它没错。
+![不同架构在推理阶段的 KV Cache 行为与显存占用对比图](/images/content-rebuild/df0f8eb5702da85f/fig-5.png)
 
-你的情况比较特殊，**资源有限但想做通用任务**？还是选 Decoder-only。一个模型能覆盖多种能力，虽然专项可能不如精调的 Encoder，但胜在灵活。
+### 1. Encoder-only
+无需自回归生成。输入整段文本后，执行一次前向计算即完成，**不需要维护 KV Cache**。
 
-![根据任务类型选择架构的决策树图，展示理解任务需求到选定架构的判断流程](/images/transformer-arch/20260606_204559_820608_01.png)
+### 2. Decoder-only
+* 在第 1 步 Prefill（提示词预填充）阶段，计算出 Prompt 中所有 Token 的 Key 和 Value 并存入缓存。
+* 后续每生成 1 个 Token（Decode 阶段），仅计算当前最新 Token 的 $Q, K, V$。
+* 将新的 $K, V$ 拼接进缓存中。自注意力 KV Cache 的长度随生成步数逐步累加（步长递增 1）。
 
-说到底，架构选择是工程决策。要看你的任务类型、数据规模、算力预算。
+### 3. Encoder-Decoder
+* **Encoder 端**：在推理开始时仅执行一次编码计算，输出 $H_{\text{enc}}$ 后即结束任务。
+* **Cross-Attention KV Cache**：由 $H_{\text{enc}}$ 投影生成的 Key 和 Value 在整个解码过程中保持不变。因此只需在第 1 步计算一次，其大小固定为 $L_{\text{source}}$，**后续解码步全程静态复用**。
+* **Decoder Self-Attention KV Cache**：与 Decoder-only 类似，记录目标端已生成的 Token，随着生成步数动态递增。
 
-## 结尾
+---
 
-现在你知道了，BERT 不是为了跟 GPT 竞争而设计的，GPT 也不是要替代 T5。它们解决的是不同的问题。
+## 工程选型依据：为什么现代 LLM 倾向于 Decoder-only？
 
-架构没有好坏之分，只有合不合适。理解了这些设计哲学，下次遇到新任务，你也能从架构层面给出判断——这才是从"调 API"到"懂模型"的关键一步。
+在模型规模较小（如百兆参数量级）时，三大架构各自在特定任务上表现突出：
 
-不过我好奇的是：BERT 和 GPT，一个靠理解起家，一个靠生成起家，它们各自的长处能不能互补？下回我们就来聊聊这个话题。
+![任务形态与架构选型决策流及权衡谱系图](/images/content-rebuild/df0f8eb5702da85f/fig-6.png)
+
+* **Encoder-only**：在文本分类、语义匹配和重排等判别任务中，由于具备全局双向注意力且无自回归开销，延迟最低且表征能力强。
+* **Encoder-Decoder**：在机器翻译、文本摘要、语音识别（如 Whisper）等非对称转换任务中，输入与输出天然异构，双塔解耦提供了良好的条件对齐能力。
+* **Decoder-only**：在开放式生成、对话和通用推理中展现出极佳的扩展性。
+
+### 现代通用大型语言模型为何大多收敛于 Decoder-only？
+
+当模型参数规模上升至数十亿到数千亿（如 7B、70B 级别）时，工程实践全面转向 Decoder-only 架构，主要原因包含以下三点：
+
+1. **系统实现与并行计算更统一**：Decoder-only 只有单一类型的注意力模块，没有 Encoder 与 Decoder 之间的跨层数据依赖。在进行张量并行（Tensor Parallelism）与流水线并行（Pipeline Parallelism）时，通信模式规整，不存在双塔之间由于长度不对称造成的计算气泡。
+2. **显存管理与调度开销更低**：在推理服务框架（如 vLLM）中，核心挑战之一是管理不规则的 KV Cache 显存碎片。Encoder-Decoder 需要同时管理固定长度的 Cross KV Cache 与动态递增的 Self KV Cache；而 Decoder-only 仅需维护一条连续增长的键值链，大幅简化了 PagedAttention 等内存池化机制的实现。
+3. **训练任务与上下文学习（In-context Learning）的泛化统一**：在 Decoder-only 框架下，无论是问答、分类还是翻译，都可以统一表述为“提示词前缀 + 下文预测”。模型在预训练时学习的通用自回归目标可以直接迁移到零样本或少样本提示（Few-shot Prompting）中，无需对输入端和输出端做专门的架构切分。
+
+关于 BERT 与 GPT 在预训练任务、表征能力与工程特化上的进一步对比，请参考下一讲：[BERT 和 GPT 的核心区别是什么？](/fundamentals/transformer-arch/bert-vs-gpt.md)。
+
+---
+
+## 读者自测
+
+1. 请写出序列长度为 3 时的因果掩码矩阵（Causal Mask），并说明当得分矩阵加上该掩码后，未来位置在 Softmax 后的计算结果为什么是严格的 0。
+2. 在 Encoder-Decoder 架构中，Cross-Attention 的 Query、Key、Value 分别来自哪里？为什么 Cross-Attention 的 Key 和 Value 在推理生成阶段可以做静态缓存？

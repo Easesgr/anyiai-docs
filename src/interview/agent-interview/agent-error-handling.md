@@ -1,131 +1,296 @@
 ---
-title: Agent 执行失败时如何恢复？
+title: Agent 执行失败时如何恢复？运行时容错与降级设计
 icon: mdi:alert-circle-outline
 tag:
-  - Agent面试
-  - 错误处理
-  - 重试
+- Agent面试
+- 错误处理
+- 重试
+description: 系统梳理 Agent 运行时的四类核心故障、异常清洗回灌、受限解码与提示重试、后备降级及断路器熔断机制，提供面试口答与工程实现。
 ---
 
-![](/images/agent-interview/agent-error-handling_cover.png)
+在以大语言模型为核心的代理（Agent）系统中，执行路径不再由确定性的静态代码预先写死，而是由模型在循环中根据上一轮的观察结果动态决策。这种动态性带来了处理开放任务的灵活性，但只要外部 API 超时、模型输出畸变 JSON，或者陷入重复调用的死循环，整个流程就会中断。
 
-# Agent 执行失败时如何恢复？重试、回滚和人工确认应该怎么设计？
+当 Agent 执行失败时，系统既不能直接崩溃报错，也不能无限制盲目重试。构建高可用的 Agent，核心在于建立分层的故障处理链路：**捕获并清洗底层异常、向模型回灌具备纠错线索的观察值、利用结构化校验与受限解码收敛格式、在外部不可用时执行降级阶梯，并在发生死循环时依靠断路器果断熔断。**
 
-这是一道考你**Agent 容错机制设计能力**的深度题。面试官不只想听你背概念，他想知道你真正理解过这些机制——什么时候该重试、什么时候该回滚、什么时候该让人介入。往下看。
+![Agent 运行时容错与自愈闭环封面图](/images/content-rebuild/2e2eca7220310f3d/cover.png)
 
-## 重试不是简单重复——Agent 需要"思考失败"
+---
 
-先说个反直觉的点：**Agent 的重试不能像传统代码那样写 retry(3)**。
+## 一、面试标准口述：Agent 运行时的四类故障与分级应对
 
-传统代码的 retry 是这样的：调用 API 失败，sleep 1秒，再试，还失败，sleep 2秒，再试。这种"机械重复"对 Agent 不适用。
+面试中被问及“Agent 执行失败时如何恢复”时，建议先给出一套清晰的故障分类，再按层级展开对应的工程防护：
 
-为什么？因为 Agent 的失败原因太复杂了。可能是**指令太模糊**、可能是**工具参数传错了**、可能是**上下文窗口不够**，甚至可能是**外部 API 临时抖动**。这些情况用同样的操作重试一万次，结果还是一样的。
+> **面试口述速记**：  
+> “Agent 运行时故障主要分为四类：  
+> 1. **协议与格式错误**：模型输出的 JSON 截断、未闭合或混入多余的 Markdown 标记；  
+> 2. **参数与约束错误**：输出符合 JSON 语法，但字段缺失、类型不符或超出业务合法范围；  
+> 3. **工具与环境异常**：外部 API 网络超时、接口鉴权失效或数据库不可用；  
+> 4. **推理停滞与死循环**：模型在遭遇失败后缺乏调整能力，反复使用相同参数调用相同工具，耗尽 Token 预算。  
+> 
+> 恢复策略对应四个层次：  
+> 对格式错误，在解码层使用**受限解码（Constrained Decoding）**，或在后置校验失败后追加包含具体错误字段的**纠错提示（Retry Prompt）**；  
+> 对参数和环境错误，不能原样回灌敏感崩溃栈，而是通过**异常网关清洗脱敏**后作为 Observation 回传，引导模型自主修正；  
+> 对外部持续不可用，触发**后备工具替换、只读数据降级或人工介入（Human-in-the-loop）**；  
+> 最后在调度引擎外挂载**断路器（Circuit Breaker）**，依据步数阈值和动作哈希检测拦截死循环。”
 
-正确做法是：**把错误信息返回给 LLM，让它自己分析原因，然后调整策略**。
+![Agent 运行时的四类核心故障分类与发生阶段](/images/content-rebuild/2e2eca7220310f3d/fig-1.png)
 
-打个比方。你让一个新厨师做红烧肉，他做糊了。传统 retry 就是让他用同样的方法再做一遍，结果肯定还是糊。Agent 的做法是告诉他"肉糊了，火太大了"，让他自己想明白要调小火。这就是本质区别。
+如上图所示，在 [Agent 核心执行循环](/interview/agent-interview/agent-loop.md) 中，格式错误与参数错误发生在模型生成阶段；工具异常发生在环境执行阶段；而连续多轮未能推进目标时，则在状态流转中累积为死循环。
 
-那具体怎么做？通常的流程是：
+### 贯穿场景：财务数据对账 Agent
+为了具体理解这四类故障，我们设定一个具体场景：**“财务对账 Agent”**。  
+用户输入指令：“统计上月华东区退款金额超过 1 万元的订单，生成报表并邮件发送给主管。”  
+执行过程中，Agent 需要按顺序执行三个动作：
+1. 调用数据库查询工具 `query_sql`；
+2. 调用数据汇总与绘图工具 `generate_report`；
+3. 调用邮件发送工具 `send_email`。
 
-1. 工具调用失败
-2. 把错误信息封装成结构化反馈
-3. 发给 LLM 分析原因
-4. LLM 返回调整后的策略（换参数、换工具、加一步准备动作）
-5. 重新执行
+在接下来的各个环节中，我们将观察该 Agent 遇到各类故障时系统如何拦截并恢复。
 
-这种"观测-分析-决策"的循环，比无脑重试有效得多。
+---
 
-![三种重试策略对比流程图，展示固定重试、指数退避、LLM自主决策三种方式的决策路径差异](/images/agent-interview/20260608_220820_881472_01.png)
+## 二、异常清洗与观察值回灌：为什么不能直传 Traceback？
+
+在传统后端开发中，遇到网络超时或 500 错误通常采用指数退避重试（Exponential Backoff）。但在 Agent 场景中，如果报错原因是模型编写的 SQL 语句少写了一个逗号，或者把订单号参数传成了中文描述，原样重试无论多少次都必然失败。系统需要将失败信息转化为下一步的提示输入，促使模型改变参数。
+
+但如果直接将底层环境的完整报错调用栈（Traceback）原样塞回给模型，会引发三个严重问题：
+1. **安全与隐私泄露**：调用栈通常包含数据库内网 IP、连接池密码、数据表结构甚至服务器本地绝对路径。
+2. **提示词注入与指令混淆**：若异常信息中包含外部未过滤的用户输入或网页抓取数据，攻击者可能在错误信息中伪造指令覆盖系统提示。
+3. **有效注意力稀释**：数百行的调用栈会挤占上下文窗口，严重干扰注意力机制对最初任务目标和有效线索的提取。
+
+因此，系统必须在工具层与模型层之间架设**异常清洗网关**，将底层异常过滤并格式化为符合 [Tool Calling](/interview/agent-interview/tool-calling.md) 协议的自然语言 Observation。
+
+![异常堆栈清洗与反馈闭环架构](/images/content-rebuild/2e2eca7220310f3d/fig-2.png)
+
+### 工程实现：异常脱敏与语义提炼
+
+下面的 Python 代码演示了异常网关如何拦截内部错误、脱敏敏感信息并输出结构化指导：
+
+```python
+import re
+from typing import Dict, Any, Callable
+
+class ToolExceptionSanitizer:
+    """清洗工具异常信息，避免暴露底层结构并提取关键纠错线索"""
+    
+    SENSITIVE_PATTERNS = [
+        (r"(password|token|key|secret)\s*=\s*['\"][^'\"]+['\"]", r"\1=***"),
+        (r"/Users/[^/]+(/.*)", r"/path/to\1"),
+        (r"/home/[^/]+(/.*)", r"/path/to\1"),
+        (r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b", "[INTERNAL_HOST]"),
+    ]
+
+    @classmethod
+    def sanitize_error(cls, tool_name: str, raw_exception: Exception) -> str:
+        raw_msg = str(raw_exception)
+        cleaned_msg = raw_msg
+        for pattern, repl in cls.SENSITIVE_PATTERNS:
+            cleaned_msg = re.sub(pattern, repl, cleaned_msg, flags=re.IGNORECASE)
+        
+        lower_msg = cleaned_msg.lower()
+        # 识别常见数据库错误并给出具有纠错导向的提示
+        if "column" in lower_msg and "does not exist" in lower_msg:
+            return (
+                f"Tool '{tool_name}' failed: Column not found. "
+                "Please verify table schema using describe_table before re-generating SQL."
+            )
+        elif "syntax error" in lower_msg:
+            return (
+                f"Tool '{tool_name}' failed: SQL syntax error near unexpected token. "
+                "Please review SQL standard grammar and retry."
+            )
+        elif "timeout" in lower_msg:
+            return (
+                f"Tool '{tool_name}' failed: Request timed out. "
+                "The query scope may be too large. Add date/region filters to reduce data volume."
+            )
+        
+        # 默认只截取首行核心描述，丢弃深层堆栈
+        first_line = cleaned_msg.split("\n")[0][:180]
+        return f"Tool '{tool_name}' execution error: {first_line}. Please adjust input arguments."
+
+def execute_tool_safely(tool_name: str, tool_func: Callable, **params) -> Dict[str, Any]:
+    """安全执行工具并规范化输出格式"""
+    try:
+        result = tool_func(**params)
+        return {
+            "role": "tool",
+            "tool_name": tool_name,
+            "status": "success",
+            "content": str(result)
+        }
+    except Exception as e:
+        safe_feedback = ToolExceptionSanitizer.sanitize_error(tool_name, e)
+        return {
+            "role": "tool",
+            "tool_name": tool_name,
+            "status": "error",
+            "content": safe_feedback
+        }
+```
+
+以贯穿场景为例：当 Agent 执行 `query_sql(query="SELECT refund_amt FROM orders WHERE region='East'")` 时，数据库抛出 `psycopg2.errors.UndefinedColumn: column "refund_amt" does not exist`。网关不会将数据库堆栈甩回，而是输出：“`Tool 'query_sql' failed: Column not found. Please verify table schema using describe_table before re-generating SQL.`”。Agent 收到该信息后，即可主动调用 `describe_table` 检查字段，从而自主纠正字段名。
+
 <ReadMoreLock />
 
-## Checkpoint 机制——Agent 的"游戏存档"
+---
 
-说完重试，再说一个更重要的：**Agent 执行中途失败了，怎么恢复到之前的状态？**
+## 三、结构自愈：受限解码与纠错提示（Retry Prompt）
 
-这就需要 Checkpoint 机制。你可以理解为**游戏存档**——做到 Boss 门口了，存个档，死了也不怕，从这个存档点重来，不用从头打。
+当模型生成的工具调用无法被系统解析时，常见的两类错误是：JSON 缺失结尾括号等**格式畸变**，以及参数字段缺少必填项或类型错误的**校验失败**。针对这两类结构失效，工程上有两种主要解决方案：
 
-Agent 的 Checkpoint 需要保存什么？五样东西：
+### 1. 受限解码（Constrained Decoding / Grammars）
+如果开发者使用的是可控推理引擎（如 vLLM、llama.cpp、Outlines 或支持结构化输出的 API），可在模型生成 Token 的过程中直接约束输出。
 
-**第一个，session_id**。这是这次对话的唯一标识，好比存档文件名。
+**机制**：推理引擎将目标工具的 JSON Schema 转换为有限状态自动机（FSM）或语法文法（EBNF）。在每一步生成下一个 Token 时，引擎检查当前生成的前缀状态，将词表中所有会导致 JSON 语法损坏或字段类型冲突的非法 Token 的 Logits 强制掩码为 $-\infty$。
 
-**第二个，messages**。整个对话历史，包括用户的原始指令、Agent 的思考过程、工具返回的结果。没有这些，Agent 怎么知道自己做到哪了？
+*   **优势**：在单次生成中确保输出符合预设的语法与类型规范，不会出现缺少括号或整数写成字母的情况。
+*   **边界**：受限解码只能保证语法结构和基础类型合规，无法保证参数在具体业务层面的合法性（例如日期范围前后颠倒、订单号不存在）；同时维护复杂文法状态机会占用额外的推理计算与调度开销。
 
-**第三个，working_directory**。Agent 当前的"工作目录"状态。如果 Agent 在一个文件夹里创建了文件、修改了配置，这些变更需要被记录下来。
+### 2. 校验反馈重试（Retry Prompt Loop）
+若调用的是黑盒商业模型 API，或者错误属于深层业务语义校验失败（例如 Pydantic 校验抛出 `ValidationError`），则需要依赖宿主环境的校验重试流程。
 
-**第四个，tool_history**。工具调用历史。比如 Agent 先查了文件列表，又看了某个文件内容，然后执行了某个命令——这个顺序和结果都需要保存。
+**机制**：宿主程序拦截反序列化异常或 Pydantic 错误信息，将出错的具体字段路径、预期类型以及模型上一步给出的错误参数打包成一条临时系统消息，再次请求模型：
 
-**第五个，checkpoint_counter**。计数器，用来标识这是第几个存档点，方便管理和回退。
+```text
+[System Feedback]:
+Your previous call to 'generate_report' failed schema validation:
+- Field 'chart_type': Value '3D_PIE' is not a valid enum. Allowed choices: ['line', 'bar', 'pie'].
+- Field 'threshold': Missing required field.
+Please regenerate the tool arguments strictly adhering to the schema.
+```
 
-有同学可能会问：什么时候该创建 Checkpoint？
+![受限解码与补救提示对比示意图](/images/content-rebuild/2e2eca7220310f3d/fig-3.png)
 
-答案是**工具调用之后**，而不是用户输入之后。为什么？因为文本对话是只读的，不会改变外部状态。但一旦调用工具——读文件、写文件、执行命令——就会对真实世界产生影响。所以在这些"可能改变状态"的操作之后，必须存个档。
+如上图所示，受限解码作用于 Token 解码步进内部，依靠状态机过滤非法候选词；而纠错提示重试作用于模型输出完成后的验证层，通过将结构化错误回传给模型发起下一轮对话修正。
 
-这样设计的好处是：**万一失败了，从上一个存档点恢复，Agent 能完整地知道自己做了什么、做到了哪一步**。
+---
 
-![Checkpoint五元组数据结构示意图，展示session_id、messages、working_directory、tool_history、checkpoint_counter五个字段及其关系](/images/agent-interview/20260608_220808_703616_01.png)
+## 四、降级阶梯与状态流转
 
-## 四种回退模式——不是只有"重来"一条路
+当底层服务发生宕机、配额超限（HTTP 429）或网络中断等硬故障时，要求模型反复调整参数重试只会浪费资源。系统需要配置预设的**降级阶梯（Fallback Ladder）**。
 
-Checkpoint 保存好了，怎么"读档"？这里就有学问了。
+![降级阶梯与状态机流转示意图](/images/content-rebuild/2e2eca7220310f3d/fig-4.png)
 
-很多同学以为回退就是"全部重来"。其实不是。Agent 的回退有四种模式，分别对应不同的需求：
+### 1. 备用工具切换（Fallback Tool Substitution）
+对于核心能力，可在工具注册表中绑定备用方案。  
+在我们的财务对账例子中，如果默认的高并发数据库只读节点发生超时（Timeout），系统底层可自动将调用无缝切换至备用离线数仓接口，并在 Observation 中附带数据新鲜度提示。这样无需修改模型的上层逻辑，即可完成透明切换。
 
-**FULL 模式——完全回退**。代码状态和对话状态全部回到 Checkpoint 点，干净利落。这适合那些"做错了方向，需要推倒重来"的场景。
+### 2. 功能退化通知（Graceful Degradation）
+如果该类别的所有可用工具全部失效（例如邮件发送服务网关彻底宕机），调度引擎应主动拦截该工具的后续调用，并向对话上下文注入明确指示：
+```text
+[Runtime System Notice]:
+The 'send_email' service is currently unreachable and all fallback channels failed.
+Do NOT attempt to call 'send_email' again.
+Please provide the final calculation results directly to the user in text format, and explicitly state that the email could not be delivered.
+```
+此时 Agent 停止尝试调用发信工具，转而将对账统计结果直接在对话框中输出，避免整个任务无功而返。
 
-**SOFT 模式——软回退**。代码状态回退，但对话历史保留。Agent 还是知道之前做了什么、失败了什么，只是代码层面回到了上一步。这适合"代码跑偏了，但思路没问题"的情况。
+### 3. 人工介入与状态挂起（Human-in-the-loop）
+对于涉及外部副作用不可逆的高风险操作（如退款打款、删除数据库表），或者重试达到阈值仍无法恢复时，执行器应主动触发中断（Interrupt），将任务状态持久化并转入人工审批队列。
 
-**CONTEXT 模式——上下文回退**。只回退对话状态，代码不动。这适合"Agent 理解错了用户意图，需要重新对话但代码已经改对了"的场景。
+主流编排框架（如 LangGraph）提供的持久化检查点（Checkpointer）机制，允许系统在节点执行前后保存完整的状态快照。人工审核人员修正参数或核准后，系统从检查点恢复（Resume）并继续向下流转。
 
-**PRUNE 模式——摘要压缩**。这个比较特殊，它不是简单的"撤销"，而是对过长的上下文进行压缩摘要，保留关键信息，丢弃冗余内容。当对话历史太长，塞不进 context window 的时候，就需要这个。
+---
 
-用影视剪辑来类比可能会更好理解。FULL 就是"撤销所有更改"；SOFT 就是"只撤销视频轨道，保留音频轨道"；CONTEXT 就是"只撤销某个片段的字幕修改"；PRUNE 就是"把一小时的素材压缩成精华版"。
+## 五、防止死循环：运行时代理解除与断路器设计
 
-不同的失败场景，用不同的回退模式，效率差很多。
+在由模型自主决策的循环中，最容易失控的问题是“状态震荡死循环”：模型尝试调用 A，报错；模型由于注意力机制对上下文中错误前缀的偏好，在下一轮稍作无关改动甚至原封不动地再次调用 A，导致同样的报错再次出现，直到耗尽最大上下文长度或预算。
 
-![四种回退模式对比表格图，横轴为代码状态和对话状态，纵轴为四种模式，展示每种模式的两者保留/回退状态](/images/agent-interview/20260608_220810_957184_01.png)
+为了防范此类故障，必须在执行循环外部挂载**断路器（Circuit Breaker）**，从三个维度进行硬性防护。
 
-## 人工确认——什么时候该让人来把关？
+![断路器状态机与检测拦截机制](/images/content-rebuild/2e2eca7220310f3d/fig-5.png)
 
-最后聊一个安全相关的问题：**Agent 执行危险操作的时候，需不需要人来确认？**
+### 断路器的三个监控维度：
+1. **最大迭代步数（Max Iteration Steps）**：限制单次任务调用的总轮次（例如不超过 10 步），防止无限制消耗。
+2. **连续错误计数器（Consecutive Failure Counter）**：当连续遭遇工具执行失败达到阈值（例如 3 次），暂停盲目调用，强制切换到降级或人工通道。
+3. **动作指纹哈希（Action Fingerprint Hashing）**：将调用的工具名与其参数键值对进行排序并序列化计算哈希。如果在最近几步的滑动窗口内出现了完全相同的指纹，判定模型陷入无意义重复，直接熔断。
 
-答案当然是**需要**。但具体怎么设计，这里有讲究。
+### 工程实现：Agent 断路器
 
-什么算危险操作？通常包括这几类：文件系统操作（删除文件、修改系统配置）、Shell 命令执行（特别是带 sudo 的）、网络请求（特别是涉及敏感数据的）、外部 API 调用（特别是会扣钱的）。
+```python
+import hashlib
+import json
+from typing import Dict, Any, List
 
-对这类操作，Agent 不能闷头执行，必须**停下来等人工确认**。
+class AgentCircuitBreaker:
+    """用于检测 Agent 执行循环中的死循环与高频连续失败"""
+    
+    def __init__(self, max_steps: int = 10, max_consecutive_errors: int = 3, window_size: int = 3):
+        self.max_steps = max_steps
+        self.max_consecutive_errors = max_consecutive_errors
+        self.window_size = window_size
+        
+        self.current_step = 0
+        self.consecutive_errors = 0
+        self.action_history: List[str] = []
+        self.is_tripped = False
 
-常见的流程是：Agent 准备执行危险操作 → 系统拦截并展示"即将执行的操作"和"可能的风险"→ 用户确认/拒绝 → 确认则执行，拒绝则终止。
+    def _compute_action_hash(self, tool_name: str, args: Dict[str, Any]) -> str:
+        # 参数键排序后序列化，确保即使字典无序也能得到稳定哈希
+        serialized = f"{tool_name}:{json.dumps(args, sort_keys=True, default=str)}"
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
-这里有个细节要注意：**先归档结果，再执行安全检查**。什么意思？
+    def pre_tool_check(self, tool_name: str, args: Dict[str, Any]) -> None:
+        """在工具实际调用前进行熔断判定"""
+        if self.is_tripped:
+            raise RuntimeError("Circuit breaker is OPEN. Execution halted.")
 
-正常流程是：检查通过 → 执行 → 返回结果。但有些系统会反过来：执行 → 保存结果到临时区 → 检查 → 通过则正式提交，失败则回滚。
+        self.current_step += 1
+        if self.current_step > self.max_steps:
+            self.is_tripped = True
+            raise RuntimeError(f"Circuit Breaker tripped: Maximum allowed steps ({self.max_steps}) exceeded.")
 
-这种设计的巧妙之处在于：既保证了安全检查不会被中断（结果已经存好了），又保证了结果不会丢失（检查失败可以回滚）。
+        action_hash = self._compute_action_hash(tool_name, args)
+        recent_actions = self.action_history[-self.window_size:]
+        if action_hash in recent_actions:
+            self.is_tripped = True
+            raise RuntimeError(
+                f"Circuit Breaker tripped: Duplicate action detected for '{tool_name}' within last "
+                f"{self.window_size} steps. System detected a repetitive failure loop."
+            )
+        
+        self.action_history.append(action_hash)
 
-还有一个更隐蔽的问题：**静默失败检测**。
+    def post_tool_record(self, is_error: bool) -> None:
+        """在工具执行完成后更新失败计数"""
+        if is_error:
+            self.consecutive_errors += 1
+            if self.consecutive_errors >= self.max_consecutive_errors:
+                self.is_tripped = True
+                raise RuntimeError(
+                    f"Circuit Breaker tripped: Consecutive error limit ({self.max_consecutive_errors}) reached."
+                )
+        else:
+            self.consecutive_errors = 0
+```
 
-什么叫静默失败？Agent 执行操作失败了，但它没有报错，而是自己偷偷换了个方式做，然后告诉用户"任务完成了"。这比系统崩溃更危险，因为用户以为一切正常，实际上结果完全不对。
+---
 
-所以系统需要建立**静默失败检测机制**：对比 Agent 声称的结果和实际执行日志，发现不一致就报警。这种"自己检查自己"的机制，是保证 Agent 可靠性的最后一道防线。
+## 六、面试深入追问与常见边界
 
-![人工确认拦截流程图，展示Agent执行危险操作前的权限检查、等待确认、执行/拒绝的完整流程](/images/agent-interview/20260608_220827_007680_01.png)
+### 追问 1：为什么不能把原始数据库 Traceback 直接扔给 LLM？
+**回答要点**：
+*   **安全信息泄露**：调用栈会暴露数据库内网拓扑、表名结构、密码字段或敏感数据行。
+*   **提示词注入风险**：未清洗的异常文本可能夹带恶意内容，干扰或覆盖主任务指令。
+*   **注意力与上下文消耗**：长文本调用栈挤占上下文，降低模型对核心任务目标的关注度，容易引发幻觉。
 
-## 面试怎么答
+![Traceback 原始暴露与净化反馈对比](/images/content-rebuild/2e2eca7220310f3d/fig-6.png)
 
-给你一段可以直接用的回答，100多字，够面试时说：
+如上图所示，直接回灌未经清洗的日志不仅带来安全隐患，还会导致注意力偏离；而通过网关脱敏提炼后，只保留关键错误原因与修复建议，能让模型高效调整参数。
 
-> Agent 执行失败时，我的处理分三层。第一层是**重试策略**，不是简单循环调用，而是把错误信息作为观测结果返回给 LLM，让它分析原因并调整策略再试。第二层是**Checkpoint 机制**，在每次工具调用后保存五元组状态（session_id、messages、working_directory、tool_history、checkpoint_counter），支持四种回退模式——FULL 完全回退、SOFT 软回退、CONTEXT 只回对话、PRUNE 压缩摘要。第三层是**人工确认**，对文件写入、Shell 命令等危险操作增加拦截层，同时建立静默失败检测，防止 Agent 谎报军功。
+### 追问 2：通过纠错提示（Retry Prompt）让模型纠错，在概率机制上有什么局限？
+**回答要点**：  
+大语言模型基于自回归生成。当一个错误的参数已经生成并保存在历史上下文中时，自注意力机制会对该错误前缀分配权重。在没有外部强干预的情况下，模型容易出现“自证实偏误”（Confirmation Bias），即倾向于顺着上一次的思路给出几乎一致的回答。
 
-这是基础版，能覆盖到核心要点。
+因此工程上需要配合其他手段：  
+1. **适度提升采样温度（Temperature）** 或切换采样分支以跳出局部最优；  
+2. **剪枝无效历史**：在重新尝试前，从上下文中剔除过去多轮尝试失败的中间交互，仅保留原始意图与最精简的报错提示；  
+3. **强制规则兜底**：多次提示重试失败后，切换至确定性的代码规则或人工处理，不能完全押注概率模型自发收敛。
 
-如果想加分，可以再补充：
-
-> 我理解 Checkpoint 设计有个原则叫"最小脚手架，最大操作 Harness"——意思是状态保存要轻量，但恢复能力要强大。另外，关于触发时机选"工具调用后"而非"用户输入后"，是因为文本对话只读不改变外部状态，只有工具调用才会产生副作用。
-
-这些细节说出来，面试官会觉得你真正实践过。
-
-![Agent错误处理架构对比图，展示Claude Code、OpenClaw、Hermes三种框架的设计差异](/images/agent-interview/20260608_220831_692800_01.png)
-
-## 一句话总结
-
-Agent 的错误恢复核心是：**让 LLM 自主分析失败原因、用 Checkpoint 保存可恢复状态、按场景选择回退模式、对危险操作增加人工确认**——四层防线，各有分工。
+### 追问 3：断路器触发熔断后，Agent 的上下文状态应该如何处理？
+**回答要点**：  
+熔断发生后，直接丢弃任务或粗暴报错会导致极差的用户体验。标准工程处理包括：
+*   **持久化执行快照**：将当前的会话历史、已成功步骤的输出、熔断原因写入数据库或持久化检查点（Checkpointer）。
+*   **梳理并返回阶段性成果**：梳理此前已经成功执行的子任务。例如在对账场景中，告知用户：“已完成华东区退款金额统计与图表生成，但因邮件服务不可用且达到最大重试次数，未能发送邮件。请在此处下载报表文件。”
+*   **挂载人工干预接口**：为该任务生成唯一跟踪 ID，方便人工排查或在修复外部接口后一键重放继续。

@@ -1,5 +1,5 @@
 
-name: 部署文档
+name: 校验文档
 
 on:
   push:
@@ -7,6 +7,11 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      deploy_github_pages:
+        description: "部署到 GitHub Pages（完整站点使用 COS，请仅对小于 1 GB 的版本启用）"
+        required: false
+        type: boolean
+        default: false
       baidu_full_push:
         description: "部署后向百度提交 Sitemap 中的全部页面"
         required: false
@@ -17,15 +22,21 @@ permissions:
   contents: write
 
 jobs:
-  deploy-gh-pages:
+  check-docs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          # 如果你文档需要 Git 子模块，取消注释下一行
-          # submodules: true
+          lfs: false
+
+      - name: 校验 Git LFS 指针
+        run: git lfs fsck --pointers HEAD
+
+      - name: 拉取部署所需原图
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_github_pages
+        run: git lfs pull
 
       - name: 设置 pnpm
         uses: pnpm/action-setup@v6
@@ -39,14 +50,28 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: 构建文档
+      # Push checks compile pages with LFS pointers, avoiding a full image download.
+      # A deployable build must first pull the original image files.
+      - name: 校验页面编译
         env:
           NODE_OPTIONS: --max_old_space_size=4096
         run: |-
           pnpm run docs:build
           > src/.vuepress/dist/.nojekyll
 
+      - name: 检查 GitHub Pages 大小限制
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_github_pages
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          size = sum(path.stat().st_size for path in Path('src/.vuepress/dist').rglob('*') if path.is_file())
+          if size >= 1_000_000_000:
+              raise SystemExit('完整站点超出 GitHub Pages 的 1 GB 大小限制，请使用 COS/CDN 部署。')
+          print(f'GitHub Pages 部署大小：{size} bytes')
+          PY
+
       - name: 部署文档
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_github_pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           # 部署文档
@@ -54,6 +79,7 @@ jobs:
           folder: src/.vuepress/dist
 
       - name: 向百度主动推送更新页面
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_github_pages
         env:
           BAIDU_PUSH_TOKEN: ${{ secrets.BAIDU_PUSH_TOKEN }}
           BAIDU_FULL_PUSH: ${{ inputs.baidu_full_push || 'false' }}

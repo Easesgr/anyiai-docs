@@ -1,148 +1,191 @@
 ---
-title: ReAct 是什么？
+title: ReAct 是什么？模型如何交替推理与调用工具？
 icon: mdi:brain
 tag:
-  - Agent面试
-  - ReAct
-  - 思考行动
+- Agent面试
+- ReAct
+- 思考行动
+description: 通过具体案例拆解 ReAct 中 Thought、Action 与 Observation 的交替循环机制，梳理宿主控制流程、面试口述模板与常见追问。
 ---
 
-![](/images/agent-interview/react_cover.png)
+在面试中被问及“什么是 ReAct”时，很多回答容易停留在“模型边想边做”这类抽象概念上，缺乏具体的工程输入、宿主拦截逻辑以及与纯思维链的对比依据。理解 ReAct，需要看清 Thought、Action、Observation 三者在上下文中的流转方式，以及宿主程序如何截断模型输出并回传工具结果。
 
-# ReAct 是什么？Thought、Action、Observation 分别代表什么？
-
-这道面试题考的是 **ReAct 推理框架**，是大模型 Agent 开发中最核心的推理范式之一。简单说，ReAct 就是让大模型在解决问题时"边想边做、边做边想"，通过 Thought（思考）、Action（行动）、Observation（观察）三个步骤的循环迭代，最终完成任务。
+![ReAct 范式的循环交互机制](/images/content-rebuild/c95259cab1f0cba9/cover.png)
 
 ---
 
-## 板块1：ReAct 解决的核心问题——为什么需要"推理+行动"
+## 面试速答：30 秒核心口述模板
 
-先说背景。早期大模型处理复杂任务，走的是两条路：
+> **面试官提问**：请简要介绍一下 Agent 中的 ReAct 模式，它的工作流程是怎样的？
 
-**纯推理路线**（CoT思维链）：模型只管想，从头到尾靠内部推理得出答案。问题在哪？模型"闭门造车"，不跟外部世界交互，遇到不知道的信息就瞎编，幻觉问题严重。
+**建议口述回答**：
 
-**纯行动路线**（WebGPT、SayCan）：模型直接调用工具查资料、执行操作。问题在哪？模型"只干不想"，拿到什么查什么，没有规划，走一步算一步，经常做无用功。
+ReAct 是 **Reasoning（推理）与 Acting（行动）** 协同交替的运行模式，最早由 Yao 等人在 2022 年提出。
 
-ReAct 的出现，就是为了解决这两条路的缺陷。它的核心思想很简单：**交替进行推理和行动，让思考指导行动，让行动验证思考**。
+它的核心是在模型推理和外部环境之间建立一个循环：
+1. **Thought（思考）**：模型根据当前任务和上下文，输出一段推理文本，说明当前状态、分解目标并确定下一步计划；
+2. **Action（行动）**：模型生成结构化的工具调用指令（如工具名和入参）；宿主程序拦截该指令，并在外部环境中实际执行工具；
+3. **Observation（观察）**：宿主程序把工具返回的结果作为客观事实，追加到上下文中重新输入给模型。
 
-![三列对比图：纯推理路线只思考不行动、纯行动路线只行动不思考、ReAct路线边思考边行动](/images/agent-interview/20260608_213352_002624_01.png)
+三者交替循环，直到模型判定已获取全部所需信息，输出 **Final Answer** 结束任务。
 
-你可以把大模型想象成一个需要完成复杂任务的员工：
-
-- 纯推理型员工 → 纸上谈兵，方案写得漂亮但不一定能用
-- 纯行动型员工 → 蛮干硬拼，累死累活可能方向就错了
-- ReAct 型员工 → 先想后做、边做边想，遇到问题随时调整
+相比只靠内部参数记忆的 CoT（思维链），ReAct 引入外部工具的返回结果，能够及时阻断虚构事实的滚雪球效应；相比不经思考直接调接口的纯 Acting 模式，ReAct 的推理过程提升了多步任务调用的准确率与可排查性。
 
 ---
+
+## 一、Thought、Action、Observation 的流转机制
+
+ReAct 并没有修改 Transformer 的模型权重或内部架构，而是一种依托上下文拼接和程序调度的模式。其核心是由宿主程序（Host）控制的大模型自回归生成循环。
+
+我们在 [/interview/agent-interview/agent-loop.md](/interview/agent-interview/agent-loop.md) 中分析过 Agent 运行循环，ReAct 就是该循环的一种经典实现。
+
+![Thought、Action、Observation 交互与状态迭代流程](/images/content-rebuild/c95259cab1f0cba9/fig-1.png)
+
+### 一次完整的状态流转过程
+
+1. **构建输入序列 ($S_t$)**：上下文包含用户原始问题、历史步骤中的推理文本、执行过的工具指令以及工具返回的文本：
+   $$S_t = \{Q, \text{Thought}_1, \text{Action}_1, \text{Obs}_1, \dots, \text{Thought}_{t-1}, \text{Action}_{t-1}, \text{Obs}_{t-1}\}$$
+2. **推理生成 ($	ext{Thought}_t$)**：模型接收 $S_t$，生成一段分析文本，归纳已收集到的信息并确定下一步调用意图。
+3. **动作生成 ($	ext{Action}_t$)**：在思考文本之后，模型生成约定的工具调用指令（例如 `search["查询词"]` 或特定的 JSON 格式）。
+4. **输出截断与工具执行**：宿主程序通过预先设定的停止标记（如遇到 `Observation:` 文本）拦截模型输出，暂停生成，解析出工具名称和入参，并在外部真实环境中运行工具代码。
+5. **回填环境观察 ($\text{Obs}_t$)**：宿主程序将工具执行结果格式化为 `Observation: [返回内容]`，拼接在上下文末尾，形成 $S_{t+1}$，再次请求模型继续生成。
+6. **终止分支**：模型在某一轮思考后判断已有足够依据回答问题，跳过工具调用，直接输出 `Final Answer: [最终回答]`，退出循环。
+
+---
+
+## 二、为什么不单独使用思维链或单独调用工具？
+
+ReAct 的提出是为了解决早期大模型应用中两条路线的各自缺陷：**仅推理（Reasoning-only，如思维链 CoT）**与**仅行动（Acting-only，如直接根据输入映射工具 API）**。
+
+![CoT、Acting 与 ReAct 在状态依赖任务中的表现对比](/images/content-rebuild/c95259cab1f0cba9/fig-2.png)
+
+### 1. 仅依赖思维链（CoT）的缺陷
+思维链通过逐步展开推理步骤激发模型的内在逻辑分解能力，但计算过程完全发生在固定的模型参数内：
+* **无法感知外部变化**：面对模型训练截止期之后的新闻、企业私有数据库或随时变动的环境状态，模型无法仅凭参数给出准确事实；
+* **错误不断累积**：由于自回归是以前序 Token 为条件进行概率采样，一旦前几步出现事实性错误，该错误就会作为已知事实输入后续计算，导致整条推理链顺着错误假设推导下去。
+
+### 2. 仅依赖工具调用（Acting）的缺陷
+模型不写出中间思考，直接输出工具调用指令并接收返回：
+* **意图理解与参数组装耦合**：模型必须在单次生成中同时完成长目标规划和入参提取。当问题需要多步拆解时，模型容易直接使用过于宽泛的搜索词，或者陷入重复调用的死循环；
+* **缺乏信息整合阶段**：工具返回多段文本后，若没有中间思考步骤来进行筛选和提炼，模型容易漏掉关键条件，导致最终输出质量下降。
+
 <ReadMoreLock />
 
-## 板块2：三元组各司其职——Thought、Action、Observation 的定义
+---
 
-ReAct 的核心就是 **Thought → Action → Observation** 三个环节不断循环。咱们逐个说：
+## 三、贯穿案例：推理与行动如何互相配合
 
-### Thought（思考）
+在 ReAct 运行中，**推理引导工具调用，外部观察修正后续推理**。
 
-这是模型的"内心独白"。Thought 负责：
-- 分解任务：把大目标拆成小步骤
-- 分析进度：判断当前做到哪一步了
-- 决定策略：下一步该怎么做
+![Observation 反馈修正错误推理假设的因果链条](/images/content-rebuild/c95259cab1f0cba9/fig-3.png)
 
-**关键点**：Thought 只在模型内部流转，不会发到外部工具。它是纯推理过程。
+### 真实两步推演示例
 
-### Action（行动）
+设用户提问：“2024 年巴黎奥运会男子 100 米自由泳冠军打破了谁保持的世界纪录？”
 
-这是模型的"外部接口"。Thought 想清楚之后，Action 负责：
-- 调用搜索引擎查资料
-- 调用 API 获取信息
-- 执行某个具体操作
+```text
+Question: 2024 年巴黎奥运会男子 100 米自由泳冠军打破了谁保持的世界纪录？
 
-**关键点**：Action 是模型与外部世界的交互通道，它会把指令发送给外部工具。
+Thought 1: 我需要先查明 2024 年巴黎奥运会男子 100 米自由泳的冠军是谁。
+Action 1: search["2024 巴黎奥运会 男子100米自由泳 冠军"]
+Observation 1: 潘展乐在 2024 年巴黎奥运会男子 100 米自由泳决赛中以 46 秒 40 夺冠并打破世界纪录。
 
-### Observation（观察）
+Thought 2: 冠军是潘展乐，他在该场比赛中打破了世界纪录。我需要查询在该场比赛之前，该项目的世界纪录由谁保持。
+Action 2: search["潘展乐 46.40 之前 男子100米自由泳 世界纪录保持者"]
+Observation 2: 潘展乐在巴黎奥运会打破的是自己此前在 2024 年 2 月多哈世锦赛创造的 46 秒 80 的世界纪录。
 
-这是外部世界的"真实反馈"。Action 执行完后，Observation 返回：
-- 搜索结果
-- API 返回的数据
-- 操作的实际结果
+Thought 3: 经过核实，打破的是潘展乐本人此前保持的纪录。信息已经完整，可以直接作答。
+Final Answer: 潘展乐打破了他本人此前在 2024 年多哈世锦赛上创造的 46 秒 80 的世界纪录。
+```
 
-**关键点**：Observation 保证模型是基于真实信息推理，而不是凭空想象。
-
-![三元组关系示意图，Thought内心独白指向Action外部行动，Action结果返回为Observation真实反馈，三者形成闭环](/images/agent-interview/20260608_213346_821568_01.png)
-
-用一个场景来理解：医生看病。
-
-- **Thought**：医生思考"这个症状可能是什么病，需要做哪些检查"
-- **Action**：医生开出检查单，让病人去做检查
-- **Observation**：检查报告出来了，这是真实的客观数据
-
-然后医生再根据检查结果继续思考、继续开检查或开药，这就是一个完整的循环。
+在这个过程中：
+1. **Thought 1 提炼目标**：将复杂问题拆分为第一步“找冠军”。
+2. **Observation 1 提供新事实**：明确了冠军是潘展乐，同时带出“打破了世界纪录”的新信息。
+3. **Thought 2 纠正方向**：不再盲目搜索其他人，而是精准检索“该纪录此前是谁保持的”。
+4. **Observation 2 阻断主观猜想**：如果单凭预训练记忆推测，模型可能会误以为是上一代名将保持的纪录；工具返回的事实直接纠正了这一步，确保了结论准确。
 
 ---
 
-## 板块3：循环工作机制——ReAct 如何迭代完成任务
+## 四、ReAct 的 Prompt 结构与宿主控制实现
 
-单个 Thought-Action-Observation 只是一个基本单元。ReAct 的真正威力在于**循环迭代**。
+在原生工具调用（Function Calling）普及前，ReAct 通常借助特定的提示词模板和文本截断机制在应用层落地。
 
-整个流程是这样的：
+![ReAct 文本提示词模板与 Stop 标记控制时序](/images/content-rebuild/c95259cab1f0cba9/fig-4.png)
 
-1. 模型根据当前状态输出 **Thought**
-2. Thought 决定需要执行什么 **Action**
-3. Action 调用外部工具，返回 **Observation**
-4. Observation 作为下一轮的输入，触发新的 **Thought**
-5. 循环往复，直到模型认为"可以输出答案了"，输出 **Final Answer**
+### 1. 经典文本 Prompt 模板结构
+标准的 ReAct System Prompt 包含工具说明、少样本格式范例（Few-shot）和运行约定：
 
-![ReAct循环流程图，展示Thought→Action→Observation→新Thought...→Final Answer的多轮迭代过程](/images/agent-interview/20260608_213344_125696_01.png)
+```text
+Answer the following questions as best you can. You have access to the following tools:
 
-这就好比用导航开车：
+{tool_descriptions}
 
-- 纯推理模式：出发前规划好全程路线，然后闭着眼睛开
-- ReAct 模式：导航每过一段路就播报"你当前位置如何、前方怎么走"，实时调整
+Use the following format:
 
-每一步的 Observation 都在纠正模型的推理，让后续思考越来越准确。这也是 ReAct 能显著**减少幻觉**的原因——你的每一步推理都有真实数据做锚点。
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
 
-在工程实现上，**LangChain 的 AgentExecutor** 就是 ReAct 的典型实现。它维护一个循环，不断调用 agent 生成 Thought 和 Action，执行后获取 Observation，直到 agent 输出 Final Answer。
+Begin!
 
----
+Question: {input}
+Thought:
+```
 
-## 板块4：优势、局限与实际应用
-
-### 优势
-
-- **可解释性强**：你能看到模型每一步在想什么、做了什么、结果是什么
-- **减少幻觉**：每步推理都基于真实的 Observation，不再凭空编造
-- **泛化性好**：同一套框架，换个工具就能处理不同任务
-
-### 局限
-
-- **计算开销大**：多轮循环意味着多次 LLM 调用，成本高、延迟高
-- **错误传播**：某一轮推理错了，后面的结论可能全歪
-- **依赖模型能力**：模型本身不够强，Thought 的质量就不行，整个链条都会受影响
-
-![优劣势对比图，左侧优势（可解释、减少幻觉、泛化）、右侧局限（开销、错误传播、能力依赖）](/images/agent-interview/20260608_213414_869440_01.png)
-
-### 应用场景
-
-ReAct 是当前主流 Agent 框架的底层推理模式：
-- **LangChain Agent**：用 AgentExecutor 实现 ReAct 循环
-- **LlamaIndex Agent**：同样基于 ReAct 范式
-- **AutoGPT 等项目**：本质就是 ReAct 的工程实现
-
-这把"瑞士军刀"很好用，但也要看任务场景——简单的问答用 CoT 就够了，复杂的工具调用任务才需要 ReAct。
+### 2. 宿主程序的三项关键控制
+* **设置停止字符串（Stop Sequence）**：在支持该参数的接口中，宿主通常配置 `stop=["\nObservation:", "Observation:"]`，在模型生成到观察前缀时由服务端中止输出。需要注意，停止字符串依赖接口支持，且若模型产生格式变体或在动作前提前伪造内容，停止字符串无法完全防范，宿主仍需配合正则解析与截断控制；
+* **输出文本解析**：宿主通过正则匹配提取 `Action` 与 `Action Input`。如果格式不合法（如工具名不存在），宿主把解析报错拼装在 `Observation` 中（例如 `Observation: Tool not found. Please choose from [...]`），让模型重新组织输入；
+* **现代原生调用的承接**：现代大模型（如通过 OpenAI 或 Anthropic 工具调用协议）将 Action 封装成了结构化的 JSON 字段。关于底层协议的具体实现，见 [/interview/agent-interview/tool-calling.md](/interview/agent-interview/tool-calling.md)。尽管交互格式从纯文本演变为结构化字段，推演、调用、回填、再推演的 ReAct 运行逻辑依然一致。
 
 ---
 
-## 面试怎么答
+## 五、面试常见误区与深层追问
 
-### 基础版
+![外显生成的 Thought 与模型内部计算表示的本质区别](/images/content-rebuild/c95259cab1f0cba9/fig-5.png)
 
-ReAct 全称是 Reasoning and Acting，是一种让大模型"边推理边行动"的推理框架。它通过 Thought-Action-Observation 三个环节的循环迭代来处理复杂任务：Thought 是模型的内心独白，负责分解任务和规划策略；Action 是外部接口，调用工具获取信息；Observation 是真实反馈，保证推理基于事实数据。这个循环持续进行，直到模型输出最终答案。LangChain 的 AgentExecutor 就是 ReAct 的典型实现。
+### 误区 1：模型输出的“Thought”是否等同于它内部真实的物理思考过程？
 
-### 加分版
+**澄清**：**不等同。外显的 Thought 只是模型自回归采样生成的自然语言文本，不是模型内部注意力或特征流动的物理读数。**
 
-相比纯推理的 CoT，ReAct 的核心优势在于引入了真实世界的反馈，能有效减少幻觉。相比纯行动的 WebGPT，ReAct 通过 Thought 保持了推理的可控性和方向感。ReAct 也有不少改进变体，比如 Reflexion（加入自我反思）、Plan-and-Execute（先规划再执行）。在实际开发中，ReAct 是 LangChain、LlamaIndex 等主流 Agent 框架的底层推理模式，适用于需要多步工具调用的复杂场景。
+1. **事后合理化倾向**：模型生成思考文本的本质依然是计算下一个 Token 的条件概率。在部分实验中发现，模型在较浅层可能已经形成了走向某种动作的隐层状态，输出的“Thought”只是用自然语言把这个倾向包装成看起来合乎逻辑的理由；
+2. **逻辑与行动脱节**：外显的思考内容有时可能与紧随其后的行动矛盾（例如 Thought 里写着“此方法不可行”，但紧接着 Action 仍调用了该方法）。不能把 Thought 视为绝对可靠的内部控制寄存器，它主要的作用是为后续 Token 采样提供有价值的上下文先验。
+
+### 误区 2：ReAct 是否总是优于单次调用或纯思维链？
+
+**澄清**：**不是。ReAct 伴随着显式的延迟和调用成本。**
+* **Token 开销与延迟成倍增加**：ReAct 每前进一步都需要发起一次模型请求。随着上下文把所有的历史 Observation 都拼装进来，上下文长度线性增长，Prefill 与生成 Decode 的耗时都会显著叠加；
+* **并非所有场景都需要工具**：对于封闭域内的代码编写、翻译、纯文本总结或基础常识推理，直接使用思维链更加经济且快速，强行引入 ReAct 反而增加了网络超时和解析失败的风险。
+
+### 常见追问及应对口径
+
+> **追问 1：如果模型陷入了“Thought -> Action -> Observation”的死循环，如何防范？**
+
+**应对思路**：
+必须由外部宿主程序施加确定性规则，而不能依赖模型自觉：
+1. **硬性最大步数限制（Max Iterations）**：在运行循环中设置步数上限（例如最多 5 轮），达到上限立刻中断工具调用，强制要求模型汇总已有线索直接生成答案；
+2. **工具调用历史去重**：宿主记录历史 `(Action, Action Input)` 哈希值。如果检测到模型连续两次使用完全相同的入参调用同一个工具，直接在新的 Observation 中注入告警提示；
+3. **容错与降级机制**：工具连续报错时触发熔断，退化为无工具回答并告知用户依赖服务受限。具体异常控制见 [/interview/agent-interview/agent-error-handling.md](/interview/agent-interview/agent-error-handling.md)。
+
+> **追问 2：ReAct 和 Plan-and-Solve（规划-执行）的区别是什么？**
+
+**应对思路**：
+* **决策粒度**：ReAct 属于**单步动态规划**。它每拿到一次工具返回，才临时决定下一步做什么，适应动态多变、需要实时探索的环境，但缺乏对全局任务的长程把控；
+* **Plan-and-Solve**：属于**前置全局规划**。它在开始前先生成完整的任务计划列表，再依次分配给执行模块。前者偏向局部动态调整，后者偏向复杂任务的结构化拆解。关于规划方案的对比详见 [/interview/agent-interview/agent-planning.md](/interview/agent-interview/agent-planning.md)。
+
+![ReAct 在面试考察知识图谱中的定位与延伸方向](/images/content-rebuild/c95259cab1f0cba9/fig-6.png)
 
 ---
 
-## 一句话总结
+## 关联导航
 
-ReAct 就是让大模型通过"想清楚 → 做一下 → 看结果 → 再想清楚"的循环，在推理和行动交替中完成复杂任务。
+* **运行环境**：了解 ReAct 所依赖的宿主调度机制 [/interview/agent-interview/agent-loop.md](/interview/agent-interview/agent-loop.md)
+* **源码实践**：从状态机与代码实现角度查看执行流程 [/interview/agent-interview/react-principle.md](/interview/agent-interview/react-principle.md)
+* **协议演进**：从文本解析升级到结构化调用 [/interview/agent-interview/tool-calling.md](/interview/agent-interview/tool-calling.md)
+* **长程决策**：单步贪心不足以覆盖全局时的规划方案 [/interview/agent-interview/agent-planning.md](/interview/agent-interview/agent-planning.md)
+* **错误治理**：工具异常与循环调用的工程防御 [/interview/agent-interview/agent-error-handling.md](/interview/agent-interview/agent-error-handling.md)
+* **备战索引**：查阅完整 Agent 常见面试考点 [/interview/agent-interview/README.md](/interview/agent-interview/README.md)

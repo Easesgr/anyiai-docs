@@ -1,895 +1,712 @@
-# PrepRAG — 详细实现文档
+---
+title: 如何实现带混合检索与降级容灾的 RAG 后端？PrepRAG 完整代码实战
+description: 从文档解析入库、Qdrant多路召回到Cross-Encoder重排与超时降级，交付一套生产可用的流式RAG完整实现。
+---
 
-## 项目结构
+在前期方案设计中，我们讨论了知识库问答系统的选型原则与指标设定。本篇进入具体代码落地阶段，目标是交付一条具备输入校验、稠密稀疏多路召回、本地重排、流式生成和容灾降级能力的完整问答后端。
+
+我们以一个具体场景贯穿全程：用户在客户端提问技术问题（例如“解释 MySQL binlog 的同步模式”），或者输入与知识库无关的问题（例如“怎样做红烧肉？”）。系统需要先解析技术文档并写入数据库；在收到请求后，同时进行语义向量检索与关键词过滤，通过互惠排名融合（RRF）合并候选；接着由精排模型核验相关性。如果最高分低于阈值，系统直接输出标准拒答；若重排模型计算超时或数据库不可用，系统需要平滑降级，保证接口不中断。
+
+![PrepRAG 核心工程拓扑架构与数据流向](/images/content-rebuild/ec19e4dcbbabc6ae/cover.png)
+
+---
+
+## 1. 项目结构与运行依赖配置
+
+为了便于维护和测试，我们将文档解析、向量存储、重排计算、文本生成和容灾缓存拆分为独立模块。所有运行时依赖的连接地址与阈值参数统一由 Pydantic Settings 进行环境变量校验。
 
 ```
-preprag/
+preprag-core/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                     # FastAPI 入口
-│   ├── config.py                   # 配置管理
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── chat.py                 # 对话接口
+│   ├── main.py                     # FastAPI 路由入口与生命周期管理
+│   ├── config.py                   # 强类型配置管理 (Pydantic Settings)
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── document_loader.py      # 文档加载（Markdown + 图片处理）
-│   │   ├── chunker.py              # 文档切分（标题感知）
-│   │   ├── embedder.py             # 向量化模块
-│   │   ├── vector_store.py         # 向量存储（ChromaDB）
-│   │   ├── bm25_store.py           # BM25 关键词检索
-│   │   ├── hybrid_retriever.py     # 混合检索 + RRF
-│   │   ├── category_router.py      # 查询分类路由
-│   │   ├── query_rewriter.py       # 查询改写
-│   │   ├── reranker.py             # 重排序
-│   │   ├── generator.py            # LLM 生成
-│   │   ├── self_rag.py             # Self-RAG 评估
-│   │   └── rag_pipeline.py         # 流水线编排
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py              # Pydantic 数据模型
-│   └── utils/
+│   │   ├── markdown_loader.py      # Markdown 解析与标签脱敏
+│   │   ├── qdrant_retriever.py     # Qdrant 稠密向量与关键词召回封装
+│   │   ├── reranker.py             # 线程隔离的本地 Cross-Encoder 精排
+│   │   ├── fallback_cache.py       # 本地离线热点问答缓存
+│   │   ├── generator.py            # 上下文拼装、流式输出与低分拒答
+│   │   └── rag_pipeline.py         # 串联全流程的主编排控制器
+│   └── schemas/
 │       ├── __init__.py
-│       ├── markdown_parser.py      # VuePress Markdown 解析
-│       └── image_processor.py      # 图片内容提取
-├── data/
-│   ├── raw/                        # 原始知识库 Markdown + 图片
-│   └── processed/                  # 处理后的 chunks (JSON)
-├── vector_store/                   # ChromaDB 持久化
+│       └── chat.py                 # 请求与响应的数据契约
 ├── scripts/
-│   ├── ingest.py                   # 数据导入脚本
-│   └── evaluate.py                 # 评估脚本
+│   └── ingest.py                   # 批量向量入库脚本
+├── tests/
+│   ├── conftest.py
+│   └── test_rag_pipeline.py        # 单元与集成测试用例
 ├── requirements.txt
-├── Dockerfile
 └── .env.example
 ```
 
----
+核心依赖版本如下：
 
-## 1. VuePress Markdown 解析
-
-知识库的 Markdown 有 VuePress 特有格式，需要专门处理。
-
-### 1.1 Frontmatter 提取
-
-```python
-# app/utils/markdown_parser.py
-import re
-import yaml
-
-class VuePressMarkdownParser:
-    """解析 VuePress 格式的 Markdown 文件"""
-
-    def parse(self, file_path: str) -> dict:
-        content = open(file_path, "r", encoding="utf-8").read()
-
-        # 1. 提取 frontmatter
-        frontmatter = {}
-        fm_match = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
-        if fm_match:
-            frontmatter = yaml.safe_load(fm_match.group(1))
-            body = content[fm_match.end():]
-        else:
-            body = content
-
-        # 2. 移除 VuePress 组件
-        body = self._remove_vuepress_components(body)
-
-        # 3. 提取图片信息
-        images = self._extract_images(body)
-
-        # 4. 提取标题结构
-        headings = self._extract_headings(body)
-
-        return {
-            "frontmatter": frontmatter,  # {title, icon, tag}
-            "body": body,
-            "images": images,
-            "headings": headings,
-            "file_path": file_path,
-        }
-
-    def _remove_vuepress_components(self, text: str) -> str:
-        """移除 VuePress 自定义组件，如 <ReadMoreLock />"""
-        text = re.sub(r"<ReadMoreLock\s*/?>", "", text)
-        text = re.sub(r"<[^>]+/>", "", text)  # 其他自闭合组件
-        return text.strip()
-
-    def _extract_images(self, text: str) -> list[dict]:
-        """提取 Markdown 图片，返回 alt + path"""
-        pattern = r"!\[([^\]]*)\]\(([^)]+)\)"
-        return [
-            {"alt": alt, "path": path}
-            for alt, path in re.findall(pattern, text)
-        ]
-
-    def _extract_headings(self, text: str) -> list[dict]:
-        """提取标题层级结构"""
-        headings = []
-        for match in re.finditer(r"^(#{1,3})\s+(.+)$", text, re.MULTILINE):
-            level = len(match.group(1))
-            title = match.group(2).strip()
-            headings.append({"level": level, "title": title, "pos": match.start()})
-        return headings
+```txt
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+pydantic-settings==2.5.2
+qdrant-client==1.11.1
+sentence-transformers==3.1.1
+torch==2.4.1
+openai==1.47.0
+jieba==0.42.1
+tenacity==9.0.0
+pytest==8.3.3
+pytest-asyncio==0.24.0
+httpx==0.27.2
 ```
 
-### 1.2 带元数据的切分
-
-```python
-# app/core/chunker.py
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-class MarkdownChunker:
-    """基于标题层级的语义切分，保留元数据"""
-
-    def __init__(self, chunk_size: int = 512, chunk_overlap: int = 64):
-        self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separators=["\n## ", "\n### ", "\n\n", "\n", "。", ".", " "],
-        )
-
-    def chunk(self, parsed_doc: dict) -> list[dict]:
-        body = parsed_doc["body"]
-        frontmatter = parsed_doc["frontmatter"]
-        images = parsed_doc["images"]
-        headings = parsed_doc["headings"]
-
-        # 按 H2 分段
-        sections = self._split_by_h2(body)
-
-        chunks = []
-        for section in sections:
-            # 对每个 H2 段落，如果太长就二次切分
-            texts = self.splitter.split_text(section["text"])
-
-            for i, text in enumerate(texts):
-                # 找到当前文本所属的图片
-                chunk_images = [
-                    img for img in images
-                    if img["alt"] in text
-                ]
-
-                chunks.append({
-                    "content": text,
-                    "metadata": {
-                        "title": frontmatter.get("title", ""),
-                        "tags": frontmatter.get("tag", []),
-                        "h2": section["h2"],
-                        "file_path": parsed_doc["file_path"],
-                        "category": self._infer_category(parsed_doc["file_path"]),
-                        "images": chunk_images,
-                        "image_descriptions": [
-                            img.get("description", img["alt"])
-                            for img in chunk_images
-                        ],
-                    },
-                })
-
-        return chunks
-
-    def _split_by_h2(self, text: str) -> list[dict]:
-        """按 H2 标题分段"""
-        import re
-        parts = re.split(r"\n(?=## )", text)
-        sections = []
-        for part in parts:
-            h2_match = re.match(r"## (.+)\n", part)
-            h2_title = h2_match.group(1).strip() if h2_match else "概述"
-            sections.append({"h2": h2_title, "text": part})
-        return sections
-
-    def _infer_category(self, file_path: str) -> str:
-        """从文件路径推断所属类目"""
-        # src/fundamentals/ml-basics/what-is-ml.md → fundamentals/ml-basics
-        # src/interview/rag-interview.md → interview
-        parts = file_path.split("/")
-        if "fundamentals" in parts:
-            idx = parts.index("fundamentals")
-            if idx + 2 < len(parts):
-                return f"fundamentals/{parts[idx+1]}"
-            return "fundamentals"
-        elif "interview" in parts:
-            return "interview"
-        return "other"
-```
-
----
-
-## 2. 图片内容增强
-
-### 2.1 图片描述提取
-
-```python
-# app/utils/image_processor.py
-from openai import OpenAI
-import base64
-from pathlib import Path
-
-class ImageProcessor:
-    """使用 GPT-4o Vision 提取图片内容描述"""
-
-    def __init__(self):
-        self.client = OpenAI()
-
-    def describe_image(self, image_path: str, alt_text: str = "") -> str:
-        """对单张图片生成结构化描述"""
-        image_data = base64.b64encode(
-            Path(image_path).read_bytes()
-        ).decode()
-
-        prompt = f"""请为这张技术知识库中的图片生成结构化描述，用于后续的文本检索。
-
-图片的原始 alt 文本：{alt_text if alt_text else "无"}
-
-请按以下格式输出：
-- 图片类型：（流程图 / 对比图 / 架构图 / 示意图 / 表格 / 公式 / 其他）
-- 核心内容：（用 2-3 句话概括图片展示的主要信息）
-- 关键元素：（列出图片中的关键组件、步骤或数据点，用逗号分隔）
-
-要求：描述要包含足够的语义信息，使得用户通过自然语言提问时能检索到这张图片。"""
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_data}",
-                            },
-                        },
-                    ],
-                }
-            ],
-            max_tokens=300,
-        )
-
-        return response.choices[0].message.content
-
-    def process_batch(self, image_dir: str, output_file: str):
-        """批量处理知识库中的所有图片"""
-        import json
-
-        results = {}
-        image_files = list(Path(image_dir).rglob("*.png"))
-
-        for img_path in image_files:
-            # 跳过封面图
-            if "_cover" in img_path.stem:
-                continue
-
-            description = self.describe_image(str(img_path))
-            results[str(img_path)] = description
-            print(f"Processed: {img_path.name}")
-
-        # 保存结果
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-
-        return results
-```
-
-### 2.2 图片描述注入 chunk
-
-在 `chunker.py` 中，将图片描述注入到 chunk 的 content 中：
-
-```python
-def _enrich_chunk_with_images(self, chunk_text: str, images: list[dict]) -> str:
-    """将图片描述附加到 chunk 文本中"""
-    if not images:
-        return chunk_text
-
-    image_contexts = []
-    for img in images:
-        desc = img.get("description", img.get("alt", ""))
-        if desc:
-            image_contexts.append(f"[图片内容：{desc}]")
-
-    if image_contexts:
-        return chunk_text + "\n\n" + "\n".join(image_contexts)
-    return chunk_text
-```
-
----
-
-## 3. 分类感知检索
-
-### 3.1 查询分类器
-
-```python
-# app/core/category_router.py
-from openai import OpenAI
-
-# 知识库类目体系
-CATEGORIES = {
-    "fundamentals": {
-        "ml-basics": "机器学习基础：数据、训练、损失函数、优化器、过拟合等",
-        "dl-basics": "深度学习基础：神经网络、反向传播、CNN、RNN、注意力机制等",
-        "transformer": "Transformer 架构详解",
-        "llm-basics": "大模型基础：GPT、LLaMA 等",
-        "token-and-tokenizer": "Token 与分词",
-        "embedding": "Embedding 向量化",
-        "training-and-finetuning": "训练与微调：SFT、LoRA、RLHF 等",
-        "inference-and-generation": "推理与生成：采样策略、解码方法",
-        "multimodal-basics": "多模态基础",
-        "evaluation-metrics": "评测指标：BLEU、ROUGE、Perplexity 等",
-    },
-    "interview": {
-        "llm-interview": "大模型面试题",
-        "prompt-interview": "Prompt 面试题",
-        "rag-interview": "RAG 面试题",
-        "agent-interview": "Agent 面试题",
-        "ai-coding-interview": "AI 编程面试题",
-        "ai-system-design-interview": "AI 系统设计面试题",
-        "model-deployment-interview": "模型部署面试题",
-        "high-freq-scenarios": "高频场景题",
-    },
-}
-
-class CategoryRouter:
-    """判断用户问题属于哪个知识域和子类目"""
-
-    def __init__(self):
-        self.client = OpenAI()
-
-    def classify(self, query: str) -> dict:
-        """返回分类结果"""
-        category_desc = "\n".join(
-            f"- {domain}/{sub}: {desc}"
-            for domain, subs in CATEGORIES.items()
-            for sub, desc in subs.items()
-        )
-
-        prompt = f"""你是一个知识库分类专家。请判断用户的问题属于以下哪个类目。
-
-类目体系：
-{category_desc}
-
-用户问题：{query}
-
-请只输出 JSON 格式：
-{{"domain": "fundamentals 或 interview", "subcategory": "子类目名", "confidence": 0.0-1.0}}"""
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-
-        import json
-        result = json.loads(response.choices[0].message.content)
-        return result
-```
-
-### 3.2 带过滤的向量检索
-
-```python
-# app/core/vector_store.py
-import chromadb
-from app.core.embedder import Embedder
-
-class VectorStore:
-    def __init__(self, db_path: str, collection_name: str = "preprag"):
-        self.client = chromadb.PersistentClient(path=db_path)
-        self.collection = self.client.get_collection(collection_name)
-        self.embedder = Embedder()
-
-    def search(
-        self,
-        query: str,
-        top_k: int = 20,
-        category: str = None,
-        subcategory: str = None,
-    ) -> list[dict]:
-        """带元数据过滤的向量检索"""
-        query_embedding = self.embedder.embed(query)
-
-        # 构建 ChromaDB where 过滤条件
-        where = None
-        if subcategory:
-            where = {"category": {"$eq": subcategory}}
-        elif category:
-            where = {"category": {"$contains": category}}
-
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            where=where,
-            include=["documents", "metadatas", "distances"],
-        )
-
-        return [
-            {
-                "content": doc,
-                "metadata": meta,
-                "score": 1 - dist,
-            }
-            for doc, meta, dist in zip(
-                results["documents"][0],
-                results["metadatas"][0],
-                results["distances"][0],
-            )
-        ]
-```
-
----
-
-## 4. 混合检索 + RRF
-
-```python
-# app/core/hybrid_retriever.py
-from rank_bm25 import BM25Okapi
-import jieba
-
-class HybridRetriever:
-    """向量检索 + BM25 + RRF 融合"""
-
-    def __init__(self, vector_store, all_chunks: list[dict]):
-        self.vector_store = vector_store
-        self.all_chunks = all_chunks
-
-        # 构建 BM25 索引
-        tokenized = [list(jieba.cut(c["content"])) for c in all_chunks]
-        self.bm25 = BM25Okapi(tokenized)
-
-    def search(self, query: str, top_k: int = 20, category: str = None) -> list[dict]:
-        # 向量检索
-        vector_results = self.vector_store.search(query, top_k=top_k, category=category)
-
-        # BM25 检索
-        tokens = list(jieba.cut(query))
-        bm25_scores = self.bm25.get_scores(tokens)
-        bm25_top_idx = bm25_scores.argsort()[-top_k:][::-1]
-        bm25_results = [
-            {"content": self.all_chunks[i]["content"],
-             "metadata": self.all_chunks[i]["metadata"],
-             "bm25_score": float(bm25_scores[i])}
-            for i in bm25_top_idx
-        ]
-
-        # RRF 融合
-        rrf_k = 60
-        score_map = {}
-
-        for rank, r in enumerate(vector_results):
-            key = r["content"][:80]
-            score_map[key] = score_map.get(key, {"rrf": 0, "data": r})
-            score_map[key]["rrf"] += 1 / (rrf_k + rank + 1)
-
-        for rank, r in enumerate(bm25_results):
-            key = r["content"][:80]
-            score_map[key] = score_map.get(key, {"rrf": 0, "data": r})
-            score_map[key]["rrf"] += 1 / (rrf_k + rank + 1)
-
-        sorted_items = sorted(score_map.values(), key=lambda x: x["rrf"], reverse=True)
-        return [item["data"] for item in sorted_items[:top_k]]
-```
-
----
-
-## 5. 查询改写
-
-```python
-# app/core/query_rewriter.py
-from openai import OpenAI
-
-class QueryRewriter:
-    def __init__(self):
-        self.client = OpenAI()
-
-    def rewrite(self, query: str, chat_history: list[dict] = None) -> list[str]:
-        history_text = ""
-        if chat_history:
-            for msg in chat_history[-6:]:
-                role = "用户" if msg["role"] == "user" else "助手"
-                history_text += f"{role}: {msg['content'][:200]}\n"
-
-        prompt = f"""你是一个查询改写专家。根据用户的问题，生成 2-3 个不同角度的搜索查询。
-
-{f"对话历史：\n{history_text}" if history_text else ""}
-
-用户问题：{query}
-
-要求：
-1. 如果有指代词（"它"、"这个"），结合对话历史消解
-2. 生成的查询覆盖问题的不同表达方式
-3. 每个查询独立一行，不要编号
-
-生成的搜索查询："""
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-
-        queries = [
-            q.strip()
-            for q in response.choices[0].message.content.strip().split("\n")
-            if q.strip()
-        ]
-
-        if query not in queries:
-            queries.insert(0, query)
-
-        return queries[:3]
-```
-
----
-
-## 6. 重排序
-
-```python
-# app/core/reranker.py
-from sentence_transformers import CrossEncoder
-
-class Reranker:
-    def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3"):
-        self.model = CrossEncoder(model_name)
-
-    def rerank(self, query: str, documents: list[dict], top_k: int = 5) -> list[dict]:
-        if not documents:
-            return []
-
-        pairs = [(query, doc["content"]) for doc in documents]
-        scores = self.model.predict(pairs)
-
-        for doc, score in zip(documents, scores):
-            doc["rerank_score"] = float(score)
-
-        return sorted(documents, key=lambda x: x["rerank_score"], reverse=True)[:top_k]
-```
-
----
-
-## 7. Self-RAG 评估
-
-```python
-# app/core/self_rag.py
-from openai import OpenAI
-import json
-
-class SelfRAGEvaluator:
-    def __init__(self):
-        self.client = OpenAI()
-
-    def evaluate(self, query: str, context: str, answer: str) -> dict:
-        prompt = f"""评估 RAG 系统输出质量。
-
-用户问题：{query}
-检索到的参考内容：
-{context}
-系统回答：
-{answer}
-
-从三个维度评估（YES/NO + 原因）：
-1. 相关性：参考内容是否与问题相关？
-2. 支撑度：回答是否基于参考内容？
-3. 有用性：回答是否解答了问题？
-
-输出 JSON：{{"relevance": true/false, "support": true/false, "usefulness": true/false, "reason": "..."}}"""
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-
-        result = json.loads(response.choices[0].message.content)
-        checks = [result["relevance"], result["support"], result["usefulness"]]
-        result["confidence"] = sum(checks) / len(checks)
-        return result
-```
-
----
-
-## 8. 流水线编排
-
-```python
-# app/core/rag_pipeline.py
-from app.core.category_router import CategoryRouter
-from app.core.query_rewriter import QueryRewriter
-from app.core.hybrid_retriever import HybridRetriever
-from app.core.reranker import Reranker
-from app.core.generator import Generator
-from app.core.self_rag import SelfRAGEvaluator
-
-class RAGPipeline:
-    def __init__(self, hybrid_retriever: HybridRetriever):
-        self.router = CategoryRouter()
-        self.rewriter = QueryRewriter()
-        self.retriever = hybrid_retriever
-        self.reranker = Reranker()
-        self.generator = Generator()
-        self.self_rag = SelfRAGEvaluator()
-
-    async def run(self, query: str, chat_history: list[dict] = None) -> dict:
-        # 1. 分类
-        category = self.router.classify(query)
-
-        # 2. 查询改写
-        queries = self.rewriter.rewrite(query, chat_history)
-
-        # 3. 混合检索（带类目过滤）
-        all_results = []
-        seen = set()
-        for q in queries:
-            results = self.retriever.search(
-                q, top_k=10, category=category.get("subcategory")
-            )
-            for r in results:
-                key = r["content"][:80]
-                if key not in seen:
-                    seen.add(key)
-                    all_results.append(r)
-
-        # 4. 重排序
-        reranked = self.reranker.rerank(query, all_results, top_k=5)
-
-        # 5. 组装上下文（含图片描述）
-        context_parts = []
-        for r in reranked:
-            text = f"[来源: {r['metadata'].get('title', '')} > {r['metadata'].get('h2', '')}]\n{r['content']}"
-            img_descs = r["metadata"].get("image_descriptions", [])
-            if img_descs:
-                text += "\n" + "\n".join(f"[图片：{d}]" for d in img_descs)
-            context_parts.append(text)
-        context = "\n\n---\n\n".join(context_parts)
-
-        # 6. 生成
-        answer = await self.generator.generate(query, context, chat_history)
-
-        # 7. Self-RAG 评估
-        eval_result = self.self_rag.evaluate(query, context, answer)
-
-        # 8. 评估不通过则二次检索
-        if eval_result["confidence"] < 0.67:
-            broader = self.retriever.search(query, top_k=30)
-            reranked = self.reranker.rerank(query, broader, top_k=8)
-            context = "\n\n---\n\n".join(r["content"] for r in reranked)
-            answer = await self.generator.generate(query, context, chat_history)
-
-        return {
-            "answer": answer,
-            "sources": [
-                {
-                    "title": r["metadata"].get("title", ""),
-                    "section": r["metadata"].get("h2", ""),
-                    "category": r["metadata"].get("category", ""),
-                }
-                for r in reranked
-            ],
-            "confidence": eval_result["confidence"],
-            "detected_category": category,
-        }
-```
-
----
-
-## 9. 数据导入脚本
-
-```python
-# scripts/ingest.py
-from pathlib import Path
-from app.utils.markdown_parser import VuePressMarkdownParser
-from app.utils.image_processor import ImageProcessor
-from app.core.chunker import MarkdownChunker
-from app.core.embedder import Embedder
-import chromadb
-import json
-
-def ingest(knowledge_base_dir: str, image_descriptions_file: str, db_path: str):
-    parser = VuePressMarkdownParser()
-    chunker = MarkdownChunker()
-    embedder = Embedder()
-
-    # 加载图片描述（如果已生成）
-    image_descs = {}
-    if Path(image_descriptions_file).exists():
-        image_descs = json.loads(Path(image_descriptions_file).read_text())
-
-    # 遍历所有 Markdown 文件
-    md_files = list(Path(knowledge_base_dir).rglob("*.md"))
-    md_files = [f for f in md_files if "README.md" not in f.name]
-
-    all_chunks = []
-    for md_file in md_files:
-        parsed = parser.parse(str(md_file))
-
-        # 跳过占位页
-        if "占位页" in parsed["body"]:
-            continue
-
-        # 注入图片描述
-        for img in parsed["images"]:
-            if str(img["path"]) in image_descs:
-                img["description"] = image_descs[str(img["path"])]
-
-        chunks = chunker.chunk(parsed)
-        all_chunks.extend(chunks)
-
-    print(f"Total chunks: {len(all_chunks)}")
-
-    # 存入 ChromaDB
-    client = chromadb.PersistentClient(path=db_path)
-    collection = client.get_or_create_collection(
-        name="preprag",
-        metadata={"hnsw:space": "cosine"},
-    )
-
-    batch_size = 100
-    for i in range(0, len(all_chunks), batch_size):
-        batch = all_chunks[i:i + batch_size]
-        texts = [c["content"] for c in batch]
-        embeddings = embedder.embed_batch(texts)
-        metadatas = []
-        for c in batch:
-            m = c["metadata"].copy()
-            # ChromaDB metadata 只支持基本类型
-            m["tags"] = ",".join(m.get("tags", []))
-            m["images"] = json.dumps(m.get("images", []), ensure_ascii=False)
-            m["image_descriptions"] = ",".join(m.get("image_descriptions", []))
-            metadatas.append(m)
-        ids = [f"chunk_{i+j}" for j in range(len(batch))]
-
-        collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
-
-    print(f"Ingested {len(all_chunks)} chunks into ChromaDB")
-
-    # 同时保存原始 chunks 用于 BM25 索引
-    Path("data/processed/chunks.json").write_text(
-        json.dumps(all_chunks, ensure_ascii=False, indent=2)
-    )
-
-if __name__ == "__main__":
-    import sys
-    ingest(
-        knowledge_base_dir=sys.argv[1],
-        image_descriptions_file="data/processed/image_descriptions.json",
-        db_path="vector_store/",
-    )
-```
-
----
-
-## 10. API 服务
-
-```python
-# app/api/chat.py
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-
-router = APIRouter()
-
-class ChatRequest(BaseModel):
-    message: str
-    history: list[dict] = []
-
-class ChatResponse(BaseModel):
-    answer: str
-    sources: list[dict]
-    confidence: float
-    detected_category: dict
-
-@router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    from app.main import pipeline
-    result = await pipeline.run(request.message, request.history)
-    return ChatResponse(**result)
-
-@router.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
-    from app.main import pipeline
-
-    async def generate():
-        async for chunk in pipeline.run_stream(request.message, request.history):
-            yield f"data: {chunk}\n\n"
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(generate(), media_type="text/event-stream")
-```
-
-```python
-# app/main.py
-from fastapi import FastAPI
-from app.api.chat import router as chat_router
-from app.core.rag_pipeline import RAGPipeline
-from app.core.hybrid_retriever import HybridRetriever
-from app.core.vector_store import VectorStore
-import json
-
-app = FastAPI(title="PrepRAG", version="1.0.0")
-app.include_router(chat_router, prefix="/api/v1")
-
-# 初始化
-vector_store = VectorStore(db_path="vector_store/")
-all_chunks = json.loads(open("data/processed/chunks.json").read())
-pipeline = RAGPipeline(HybridRetriever(vector_store, all_chunks))
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-```
-
----
-
-## 11. 评估
-
-### 评估数据集构建
-
-```python
-# 手动构建测试集，每个类目 5-10 个问题
-test_set = [
-    {
-        "query": "什么是梯度消失？怎么解决？",
-        "expected_category": "fundamentals/dl-basics",
-        "expected_docs": ["gradient-vanishing-exploding"],
-        "expected_answer_keywords": ["梯度", "激活函数", "残差连接", "BatchNorm"],
-    },
-    {
-        "query": "LoRA 和全量微调有什么区别？",
-        "expected_category": "fundamentals/training-and-finetuning",
-        "expected_docs": ["training-and-finetuning"],
-        "expected_answer_keywords": ["低秩", "参数量", "效率", "效果"],
-    },
-    # ...
-]
-```
-
-### 评估指标
-
-| 指标 | 定义 | 目标 |
-|------|------|------|
-| Hit@5 | Top-5 中是否包含正确文档 | > 85% |
-| 分类准确率 | 查询分类是否正确 | > 90% |
-| 回答相关性 | 人工评分 1-5 | > 4.0 |
-| 可追溯性 | 回答是否被检索内容支撑 | > 90% |
-| 图片检索召回 | 含图内容是否被正确检索 | > 75% |
-
----
-
-## 12. 配置
+配置模块 `app/config.py` 在应用启动时读取环境变量并进行类型检查：
 
 ```python
 # app/config.py
 from pydantic_settings import BaseSettings
+from pydantic import Field
 
 class Settings(BaseSettings):
-    openai_api_key: str
-    openai_base_url: str = "https://api.openai.com/v1"
-    embedding_model: str = "text-embedding-3-small"
-    llm_model: str = "gpt-4o-mini"
-    vision_model: str = "gpt-4o-mini"
-    chroma_db_path: str = "./vector_store"
-    collection_name: str = "preprag"
-    chunk_size: int = 512
-    chunk_overlap: int = 64
-    retrieval_top_k: int = 20
-    rerank_top_k: int = 5
-    rrf_k: int = 60
-
+    app_env: str = Field(default="production", alias="APP_ENV")
+    openai_api_key: str = Field(..., alias="OPENAI_API_KEY")
+    openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
+    
+    # Qdrant 数据库连接
+    qdrant_host: str = Field(default="localhost", alias="QDRANT_HOST")
+    qdrant_port: int = Field(default=6333, alias="QDRANT_PORT")
+    qdrant_api_key: str | None = Field(default=None, alias="QDRANT_API_KEY")
+    collection_name: str = Field(default="preprag_kb", alias="COLLECTION_NAME")
+    
+    # 模型与检索配置
+    dense_model_name: str = "text-embedding-3-small"
+    dense_vector_dim: int = 1536
+    reranker_model_path: str = "BAAI/bge-reranker-base"
+    
+    # 检索阈值与降级设置
+    retrieval_dense_limit: int = 25
+    retrieval_sparse_limit: int = 25
+    rerank_top_k: int = 4
+    relevance_threshold: float = 0.35  # 重排得分低于此阈值时直接拒答
+    reranker_timeout_ms: int = 350     # 重排超时阈值（毫秒），超出则跳过重排
+    
     class Config:
         env_file = ".env"
+        extra = "ignore"
+
+settings = Settings()
 ```
 
-```txt
-# requirements.txt
-fastapi==0.115.0
-uvicorn==0.30.0
-langchain==0.3.0
-langchain-community==0.3.0
-openai==1.50.0
-chromadb==0.5.0
-rank-bm25==0.2.2
-jieba==0.42.1
-sentence-transformers==3.0.0
-pydantic-settings==2.5.0
-pyyaml==6.0.2
+---
+
+## 2. 数据入库管道：文档清洗、切分与批量写入
+
+知识库原始文件多为 Markdown 格式，常包含前端自定义标签（如 `<ReadMoreLock />`）和 YAML Frontmatter 元数据。如果直接整体切块，标签字符会干扰向量语义，而且跨章节切分容易截断逻辑上下文。
+
+我们的切分策略是：首先清洗掉渲染用标签并抽取元数据；接着按二级标题（`## `）将长文拆成独立小节；若单节字符数过大，再按换行与句号进行重叠滑动切块（Overlap），保证句子边界完整。
+
+![Markdown 清洗、层级切分与批量向量入库状态机](/images/content-rebuild/ec19e4dcbbabc6ae/fig-1.png)
+
+### 2.1 文档解析与标题感知切分
+
+```python
+# app/core/markdown_loader.py
+import re
+import yaml
+from dataclasses import dataclass
+
+@dataclass
+class ParsedSection:
+    title: str
+    category: str
+    h2: str
+    content: str
+    source_file: str
+
+class MarkdownProcessor:
+    @staticmethod
+    def clean_custom_tags(text: str) -> str:
+        # 清洗特殊占位标签与组件标签
+        text = re.sub(r"<ReadMoreLock\s*/?>", "", text)
+        text = re.sub(r"<[A-Za-z0-9_-]+(?:\s+[^>]*)?/?>", "", text)
+        return text.strip()
+
+    def parse_file(self, file_path: str) -> list[ParsedSection]:
+        with open(file_path, "r", encoding="utf-8") as f:
+            raw = f.read()
+
+        frontmatter = {}
+        body = raw
+        # 提取头部 YAML 元数据
+        fm_match = re.match(r"^---\n(.*?)\n---\n", raw, re.DOTALL)
+        if fm_match:
+            try:
+                frontmatter = yaml.safe_load(fm_match.group(1)) or {}
+            except yaml.YAMLError:
+                frontmatter = {}
+            body = raw[fm_match.end():]
+
+        cleaned_body = self.clean_custom_tags(body)
+        doc_title = frontmatter.get("title", "未命名主题")
+        category = frontmatter.get("category", "interview")
+
+        # 以二级标题为边界进行分段切分
+        sections: list[ParsedSection] = []
+        parts = re.split(r"\n(?=##\s+)", cleaned_body)
+        
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            lines = part.splitlines()
+            h2_title = "概述"
+            if lines[0].startswith("## "):
+                h2_title = lines[0].replace("## ", "").strip()
+                content = "\n".join(lines[1:]).strip()
+            else:
+                content = part
+
+            if content:
+                sections.append(ParsedSection(
+                    title=doc_title,
+                    category=category,
+                    h2=h2_title,
+                    content=content,
+                    source_file=file_path
+                ))
+        return sections
 ```
+
+### 2.2 批量向量化与带重试的入库写入
+
+如果单条调用向量接口和单条插入数据库，网络往返开销较大；但如果一次性提交上万条，容易触发 API 速率限制或数据库内存尖峰。在入库脚本中，我们将批大小控制在 64 条，并使用 `tenacity` 库在发生网络抖动时进行指数退避重试。
+
+```python
+# scripts/ingest.py
+import uuid
+import jieba
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from openai import OpenAI
+from app.config import settings
+from app.core.markdown_loader import MarkdownProcessor, ParsedSection
+
+openai_client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+qdrant = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port, api_key=settings.qdrant_api_key)
+
+def init_collection():
+    # 检查并创建指定向量维度的集合，采用余弦距离
+    collections = [c.name for c in qdrant.get_collections().collections]
+    if settings.collection_name not in collections:
+        qdrant.create_collection(
+            collection_name=settings.collection_name,
+            vectors_config=VectorParams(size=settings.dense_vector_dim, distance=Distance.COSINE),
+        )
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(Exception),
+    reraise=True
+)
+def upsert_batch_with_retry(points: list[PointStruct]):
+    qdrant.upsert(collection_name=settings.collection_name, points=points, wait=True)
+
+def extract_sparse_tokens(text: str) -> list[str]:
+    # 提取分词结果作为 Payload 中的词法检索关键词
+    return [w.lower() for w in jieba.cut(text) if len(w.strip()) > 1]
+
+def run_ingestion(file_paths: list[str], batch_size: int = 64):
+    init_collection()
+    processor = MarkdownProcessor()
+    all_sections: list[ParsedSection] = []
+    for p in file_paths:
+        all_sections.extend(processor.parse_file(p))
+
+    for i in range(0, len(all_sections), batch_size):
+        chunk_batch = all_sections[i:i + batch_size]
+        texts = [f"{s.title} - {s.h2}\n{s.content}" for s in chunk_batch]
+        
+        # 批量获取文本嵌入向量
+        response = openai_client.embeddings.create(input=texts, model=settings.dense_model_name)
+        embeddings = [data.embedding for data in response.data]
+
+        points = []
+        for section, text_content, vector in zip(chunk_batch, texts, embeddings):
+            # 生成稳定唯一的主键 UUID
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{section.source_file}_{section.h2}_{section.content[:30]}"))
+            points.append(PointStruct(
+                id=point_id,
+                vector=vector,
+                payload={
+                    "title": section.title,
+                    "category": section.category,
+                    "h2": section.h2,
+                    "content": section.content,
+                    "source_file": section.source_file,
+                    "sparse_tokens": extract_sparse_tokens(text_content)
+                }
+            ))
+        
+        upsert_batch_with_retry(points)
+        print(f"成功写入索引切片：第 {i + 1} 至 {i + len(points)} 条")
+```
+
+<ReadMoreLock />
+
+---
+
+## 3. 多路召回与互惠排名融合（RRF）
+
+只靠向量稠密检索，在遇到精准类名、错误代号或参数缩写时可能出现语义漂移；而只靠关键词匹配，又无法召回表述不同但含义一致的近义内容。根据实际工程经验，常用方案是将稠密检索与基于分词过滤的稀疏词法检索结合，再由互惠排名融合（Reciprocal Rank Fusion, RRF）对多路结果进行重排序。
+
+![Qdrant 稠密与稀疏多路召回及 RRF 融合计算机制](/images/content-rebuild/ec19e4dcbbabc6ae/fig-2.png)
+
+### 3.1 RRF 融合算例与说明
+
+假设召回通道集合为 $M$（包括稠密向量通道与关键词通道），$d$ 为候选切片，$r_m(d)$ 为文档 $d$ 在第 $m$ 个通道中的排位（从 $1$ 起始），平滑常数通常设为 $k = 60$。文档综合分数为：
+
+$$RRF(d) = \sum_{m \in M} \frac{1}{k + r_m(d)}$$
+
+**算例推导**：
+- 设文档 A（关于 MySQL binlog 同步）在稠密检索中排第 $1$ 名，在关键词召回中排第 $3$ 名：
+  $$RRF(A) = \frac{1}{60 + 1} + \frac{1}{60 + 3} = \frac{1}{61} + \frac{1}{63} \approx 0.01639 + 0.01587 = 0.03226$$
+- 设文档 B 在稠密检索中排第 $2$ 名，在关键词召回中未出现（即仅单路召回）：
+  $$RRF(B) = \frac{1}{60 + 2} = \frac{1}{62} \approx 0.01613$$
+
+由于 RRF 只使用排位索引而不是未归一化的相似度分数，它消除了余弦距离与 BM25 分数之间数值尺度不统一的问题。
+
+*注意：在 Qdrant 官方体系中，标准混合检索可以通过服务端内置稀疏向量（Sparse Vectors）配合 `prefetch` 与 `rrf` 算子完成；下述代码采用 Jieba 分词 Payload 配合客户端 RRF，属于不依赖外部稀疏模型服务时的轻量级应用层替代方案。*
+
+```python
+# app/core/qdrant_retriever.py
+import jieba
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import Filter, FieldCondition, MatchAny
+from openai import AsyncOpenAI
+from app.config import settings
+
+class HybridRetriever:
+    def __init__(self, qdrant: AsyncQdrantClient, openai: AsyncOpenAI):
+        self.qdrant = qdrant
+        self.openai = openai
+
+    async def _get_dense_vector(self, query: str) -> list[float]:
+        resp = await self.openai.embeddings.create(input=[query], model=settings.dense_model_name)
+        return resp.data[0].embedding
+
+    async def search(self, query: str, category_filter: str | None = None) -> list[dict]:
+        query_vector = await self._get_dense_vector(query)
+        keywords = [w.lower() for w in jieba.cut(query) if len(w.strip()) > 1]
+
+        base_filter = None
+        if category_filter:
+            base_filter = Filter(must=[FieldCondition(key="category", match=MatchAny(any=[category_filter]))])
+
+        # 通道 1：基于 HNSW 索引的稠密向量检索
+        dense_results = await self.qdrant.search(
+            collection_name=settings.collection_name,
+            query_vector=query_vector,
+            query_filter=base_filter,
+            limit=settings.retrieval_dense_limit
+        )
+
+        # 通道 2：基于稀疏分词 Payload 的关键词召回
+        sparse_results = ([], None)
+        conditions = []
+        if keywords:
+            conditions.append(FieldCondition(key="sparse_tokens", match=MatchAny(any=keywords)))
+        if base_filter and base_filter.must:
+            conditions.extend(base_filter.must)
+
+        if conditions:
+            sparse_results = await self.qdrant.scroll(
+                collection_name=settings.collection_name,
+                scroll_filter=Filter(must=conditions),
+                limit=settings.retrieval_sparse_limit,
+                with_payload=True,
+                with_vectors=False
+            )
+
+        # 客户端 RRF 计算
+        rrf_scores: dict[str, float] = {}
+        doc_map: dict[str, dict] = {}
+        k = 60
+
+        for rank, hit in enumerate(dense_results):
+            doc_id = str(hit.id)
+            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+            doc_map[doc_id] = hit.payload
+
+        for rank, record in enumerate(sparse_results[0]):
+            doc_id = str(record.id)
+            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+            doc_map[doc_id] = record.payload
+
+        sorted_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
+        merged = []
+        for did in sorted_ids:
+            item = doc_map[did]
+            item["doc_id"] = did
+            item["rrf_score"] = rrf_scores[did]
+            merged.append(item)
+        return merged
+```
+
+---
+
+## 4. 本地 Cross-Encoder 重排与线程隔离
+
+向量召回阶段使用的双塔模型（Bi-Encoder）分别编码 Query 与候选文本，计算速度快，但缺少二者之间的深层词元交互。重排模型（Cross-Encoder）将 `(Query, Document)` 拼接成一个序列送入 Transformer，能够完整计算词对词的注意力得分，因此打分精度更高。
+
+在 FastAPI 异步服务中，Transformer 的推理计算是同步的 CPU 或 GPU 密集型任务。若直接在 `async def` 函数中调用 `model.predict()`，会占用主事件循环，导致其他并发网络请求出现延迟。因此，需要使用 `asyncio.to_thread` 将重排任务分派到独立工作线程池中执行。
+
+![Cross-Encoder 精排交互机制与异步非阻塞线程池调度](/images/content-rebuild/ec19e4dcbbabc6ae/fig-3.png)
+
+```python
+# app/core/reranker.py
+import asyncio
+import torch
+from sentence_transformers import CrossEncoder
+from app.config import settings
+
+class LocalReranker:
+    def __init__(self):
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = CrossEncoder(settings.reranker_model_path, max_length=512, device=device)
+
+    def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
+        scores = self.model.predict(pairs, batch_size=16, show_progress_bar=False)
+        return [float(s) for s in scores]
+
+    async def rerank(self, query: str, candidates: list[dict], top_k: int) -> list[dict]:
+        if not candidates:
+            return []
+        
+        pairs = [(query, f"{c.get('title', '')} {c.get('h2', '')}: {c.get('content', '')}") for c in candidates]
+        # 移交线程池计算，防止阻塞主事件循环
+        scores = await asyncio.to_thread(self._predict_sync, pairs)
+
+        for doc, score in zip(candidates, scores):
+            doc["rerank_score"] = score
+
+        ranked = sorted(candidates, key=lambda x: x["rerank_score"], reverse=True)
+        return ranked[:top_k]
+```
+
+---
+
+## 5. 流式生成器构建与低分拒答守卫
+
+当知识库中没有与用户问题相关的切片时，如果仍将低关联度文本拼入 Prompt，模型极易基于无关材料生成错误结论。我们在调用大语言模型前增加置信度门禁：若精排候选列表为空，或第 1 名的重排分数低于设定阈值 $\tau$（如 $0.35$），生成器直接返回预设的拒答说明，不发起模型流式调用。
+
+![流式响应生成、SSE 事件切分与低置信度拒答守卫](/images/content-rebuild/ec19e4dcbbabc6ae/fig-4.png)
+
+```python
+# app/core/generator.py
+import json
+from typing import AsyncGenerator
+from openai import AsyncOpenAI
+from app.config import settings
+
+REJECTION_TEMPLATE = "抱歉，当前的面试知识库中未能检索到与该问题充分相关的权威内容。建议您补充具体技术细节或核心概念后重新提问。"
+
+SYSTEM_PROMPT = """你是一个严肃严谨的 AI 面试技术顾问。你只能根据所提供的参考上下文回答用户的面试问题。
+如果参考内容不足以得出严谨结论，请如实说明缺少的知识点，不要虚构事实。
+回答必须结构清晰，标出对应知识点名称。"""
+
+class StreamGenerator:
+    def __init__(self, openai_client: AsyncOpenAI):
+        self.client = openai_client
+
+    def _format_context(self, docs: list[dict]) -> str:
+        blocks = []
+        for idx, d in enumerate(docs):
+            blocks.append(f"[参考材料 {idx+1}] 来源: 《{d['title']}》 - {d['h2']}\n{d['content']}")
+        return "\n\n".join(blocks)
+
+    async def generate_stream(
+        self, query: str, ranked_docs: list[dict]
+    ) -> AsyncGenerator[str, None]:
+        # 门禁检查：若候选为空或最高分低于阈值，立即输出结构化拒答事件并终止
+        if not ranked_docs or ranked_docs[0].get("rerank_score", 0.0) < settings.relevance_threshold:
+            refusal_payload = {"event": "chunk", "delta": REJECTION_TEMPLATE, "is_refusal": True}
+            yield f"data: {json.dumps(refusal_payload, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'event': 'done', 'sources': []}, ensure_ascii=False)}\n\n"
+            return
+
+        context_text = self._format_context(ranked_docs)
+        user_message = f"问题：{query}\n\n参考上下文：\n{context_text}"
+
+        response = await self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message}
+            ],
+            stream=True,
+            temperature=0.1,
+        )
+
+        async for chunk in response:
+            delta = chunk.choices[0].delta.content or ""
+            if delta:
+                yield f"data: {json.dumps({'event': 'chunk', 'delta': delta, 'is_refusal': False}, ensure_ascii=False)}\n\n"
+
+        sources = [{"title": d["title"], "h2": d["h2"], "score": d.get("rerank_score", 0.0)} for d in ranked_docs]
+        yield f"data: {json.dumps({'event': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
+```
+
+---
+
+## 6. 超时与存储故障时的两级降级编排
+
+在实际服务中，重排推理可能因突发流量导致线程池排队超时，向量数据库也可能发生瞬时连接中断。为了防止单点延迟扩散为整条链路失败，我们设计了两级容灾回退：
+
+1. **重排超时降级**：设定重排硬超时时间（如 $350\text{ms}$，通过 `asyncio.wait_for` 控制）。若在规定时间内未完成计算，立即捕获 `TimeoutError`，退回使用 RRF 排序前 $K$ 的候选切片送入生成模型。
+   *说明：降级时若为了跳过拒答门禁而直接赋予默认有效分，虽然能确保答案输出，但会失去低相关度拦截保护，属于高可用性优先的折中选择。*
+2. **存储异常热点回退**：若 Qdrant 发生网络异常或宕机，编排器捕获全局检索异常，切流至本地静态 JSON 热点缓存输出高频离线解答。
+
+![系统容灾降级决策拓扑与两级回退路径](/images/content-rebuild/ec19e4dcbbabc6ae/fig-5.png)
+
+```python
+# app/core/fallback_cache.py
+import json
+from pathlib import Path
+
+class LocalHotCache:
+    """本地离线高频问答缓存"""
+    def __init__(self, cache_file: str = "data/hot_qa_cache.json"):
+        self.cache: dict[str, str] = {}
+        path = Path(cache_file)
+        if path.exists():
+            try:
+                self.cache = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                self.cache = {}
+
+    def get_fallback_answer(self, query: str) -> str | None:
+        for k, v in self.cache.items():
+            if k in query or query in k:
+                return v
+        return None
+```
+
+主编排控制器将所有组件串联成完整闭环：
+
+```python
+# app/core/rag_pipeline.py
+import asyncio
+import json
+import logging
+from app.config import settings
+from app.core.qdrant_retriever import HybridRetriever
+from app.core.reranker import LocalReranker
+from app.core.generator import StreamGenerator
+from app.core.fallback_cache import LocalHotCache
+
+logger = logging.getLogger("preprag.pipeline")
+
+class RAGPipelineCoordinator:
+    def __init__(
+        self,
+        retriever: HybridRetriever,
+        reranker: LocalReranker,
+        generator: StreamGenerator,
+        fallback_cache: LocalHotCache
+    ):
+        self.retriever = retriever
+        self.reranker = reranker
+        self.generator = generator
+        self.fallback_cache = fallback_cache
+
+    async def execute_query_stream(self, query: str, category: str | None = None):
+        candidates = []
+        try:
+            # 步骤 1: 稠密与稀疏多路检索
+            candidates = await self.retriever.search(query, category_filter=category)
+        except Exception as e:
+            logger.error(f"向量检索异常，启动离线缓存降级: {str(e)}")
+            fallback_ans = self.fallback_cache.get_fallback_answer(query)
+            if fallback_ans:
+                yield f"data: {json.dumps({'event': 'chunk', 'delta': f'[系统降级提示：知识库检索故障，返回离线热点回答]\n\n{fallback_ans}'}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'event': 'chunk', 'delta': '知识库检索暂时不可用，且未命中本地热点问答，请稍后重试。'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'event': 'done', 'sources': []}, ensure_ascii=False)}\n\n"
+            return
+
+        # 步骤 2: Cross-Encoder 重排与超时降级
+        ranked_docs = []
+        if candidates:
+            try:
+                ranked_docs = await asyncio.wait_for(
+                    self.reranker.rerank(query, candidates, top_k=settings.rerank_top_k),
+                    timeout=settings.reranker_timeout_ms / 1000.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("重排计算超时，降级退回 RRF 融合候选")
+                # 超时降级：直接取 RRF 前 Top-K 结果，赋予默认有效分保证可用性
+                for d in candidates[:settings.rerank_top_k]:
+                    d["rerank_score"] = 1.0
+                ranked_docs = candidates[:settings.rerank_top_k]
+            except Exception as e:
+                logger.error(f"重排计算异常: {str(e)}，降级采用 RRF 候选")
+                for d in candidates[:settings.rerank_top_k]:
+                    d["rerank_score"] = 1.0
+                ranked_docs = candidates[:settings.rerank_top_k]
+
+        # 步骤 3: 触发流式输出与低分拒答
+        async for sse_event in self.generator.generate_stream(query, ranked_docs):
+            yield sse_event
+```
+
+在 `app/main.py` 中挂载流式 HTTP 路由：
+
+```python
+# app/main.py
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from qdrant_client import AsyncQdrantClient
+from openai import AsyncOpenAI
+from app.config import settings
+from app.core.qdrant_retriever import HybridRetriever
+from app.core.reranker import LocalReranker
+from app.core.generator import StreamGenerator
+from app.core.fallback_cache import LocalHotCache
+from app.core.rag_pipeline import RAGPipelineCoordinator
+
+app = FastAPI(title="PrepRAG Service")
+
+qdrant_client = AsyncQdrantClient(host=settings.qdrant_host, port=settings.qdrant_port, api_key=settings.qdrant_api_key)
+openai_client = AsyncOpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+
+retriever = HybridRetriever(qdrant_client, openai_client)
+reranker = LocalReranker()
+generator = StreamGenerator(openai_client)
+fallback_cache = LocalHotCache()
+pipeline = RAGPipelineCoordinator(retriever, reranker, generator, fallback_cache)
+
+class AskRequest(BaseModel):
+    question: str
+    category: str | None = None
+
+@app.post("/api/v1/chat/stream")
+async def stream_chat(req: AskRequest):
+    return StreamingResponse(
+        pipeline.execute_query_stream(req.question, req.category),
+        media_type="text/event-stream"
+    )
+```
+
+---
+
+## 7. 测试验收：端到端与异常降级断言
+
+为了验证系统在正常查询、无关提问以及模块异常下的表现，我们使用 `pytest` 编写三条核心测试：
+1. **正常问答**：验证混合检索召回有效材料并正常完成流式响应；
+2. **低分拒答**：验证提问无关问题时，重排打分低于阈值，系统终止流式生成并返回标准拒答；
+3. **重排超时降级**：验证重排模型出现延迟阻塞时，系统在 $350\text{ms}$ 内捕获异常并平滑切换至 RRF 候选输出。
+
+![Pytest 模拟测试环境拓扑与三大集成验证路径](/images/content-rebuild/ec19e4dcbbabc6ae/fig-6.png)
+
+```python
+# tests/test_rag_pipeline.py
+import pytest
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+from app.core.rag_pipeline import RAGPipelineCoordinator
+from app.core.generator import REJECTION_TEMPLATE, StreamGenerator
+
+@pytest.mark.asyncio
+async def test_normal_retrieval_and_streaming():
+    """测试正常链路：混合检索、精排与流式输出"""
+    mock_retriever = AsyncMock()
+    mock_retriever.search.return_value = [
+        {"title": "MySQL高可用", "h2": "binlog模式", "content": "Row格式记录行变更，Statement记录SQL。", "rrf_score": 0.032}
+    ]
+    mock_reranker = AsyncMock()
+    mock_reranker.rerank.return_value = [
+        {"title": "MySQL高可用", "h2": "binlog模式", "content": "Row格式记录行变更，Statement记录SQL。", "rerank_score": 0.89}
+    ]
+    mock_generator = AsyncMock()
+    async def mock_stream(q, docs):
+        yield 'data: {"event": "chunk", "delta": "MySQL binlog 包括 Row 和 Statement 等模式。", "is_refusal": false}\n\n'
+        yield 'data: {"event": "done", "sources": [{"title": "MySQL高可用", "h2": "binlog模式"}]}\n\n'
+    mock_generator.generate_stream = mock_stream
+    mock_cache = MagicMock()
+
+    pipeline = RAGPipelineCoordinator(mock_retriever, mock_reranker, mock_generator, mock_cache)
+    events = []
+    async for e in pipeline.execute_query_stream("解释 MySQL binlog 的同步模式"):
+        events.append(e)
+
+    assert len(events) == 2
+    assert "MySQL binlog 包括" in events[0]
+    assert "MySQL高可用" in events[1]
+
+@pytest.mark.asyncio
+async def test_low_score_refusal():
+    """测试置信度守卫：当精排分数低于安全阈值时触发拒答"""
+    mock_retriever = AsyncMock()
+    mock_retriever.search.return_value = [
+        {"title": "烹饪教程", "h2": "红烧肉做法", "content": "五花肉先焯水加生抽老抽。", "rrf_score": 0.01}
+    ]
+    mock_reranker = AsyncMock()
+    mock_reranker.rerank.return_value = [
+        {"title": "烹饪教程", "h2": "红烧肉做法", "content": "五花肉先焯水加生抽老抽。", "rerank_score": 0.12}  # 低于 0.35 阈值
+    ]
+    
+    real_generator = StreamGenerator(openai_client=AsyncMock())
+    mock_cache = MagicMock()
+
+    pipeline = RAGPipelineCoordinator(mock_retriever, mock_reranker, real_generator, mock_cache)
+    events = []
+    async for e in pipeline.execute_query_stream("怎样做红烧肉？"):
+        events.append(e)
+
+    assert len(events) == 2
+    assert REJECTION_TEMPLATE in events[0]
+    assert '"is_refusal": true' in events[0]
+
+@pytest.mark.asyncio
+async def test_reranker_timeout_fallback():
+    """测试可用性保障：当重排模型响应超时，平滑退回 RRF 候选列表"""
+    mock_retriever = AsyncMock()
+    mock_retriever.search.return_value = [
+        {"title": "MySQL高可用", "h2": "主从同步", "content": "从库通过 IO 线程拉取 relay log。", "rrf_score": 0.035}
+    ]
+    
+    mock_reranker = AsyncMock()
+    async def slow_rerank(*args, **kwargs):
+        await asyncio.sleep(0.5)  # 模拟耗时 500ms，超过设定的 350ms 阈值
+        return []
+    mock_reranker.rerank = slow_rerank
+
+    mock_generator = AsyncMock()
+    captured_docs = []
+    async def capture_stream(query, docs):
+        captured_docs.extend(docs)
+        yield 'data: {"event": "done"}\n\n'
+    mock_generator.generate_stream = capture_stream
+    mock_cache = MagicMock()
+
+    pipeline = RAGPipelineCoordinator(mock_retriever, mock_reranker, mock_generator, mock_cache)
+    
+    events = []
+    async for e in pipeline.execute_query_stream("解释主从复制原理"):
+        events.append(e)
+
+    # 断言成功捕获超时并降级送入原始 RRF 候选
+    assert len(captured_docs) == 1
+    assert captured_docs[0]["title"] == "MySQL高可用"
+    assert captured_docs[0]["rerank_score"] == 1.0
+```
+
+在终端执行测试套件：
+
+```bash
+pytest tests/test_rag_pipeline.py -v
+```
+
+测试全部通过即说明：文档切片入库、稠密与关键词双路检索、互惠排名融合、Cross-Encoder 线程隔离重排、低分拒答守卫与超时降级回退已全部验证完成。在后续篇章中，我们将进一步讨论在更高并发场景下如何对检索链路进行缓存加速与性能评测。

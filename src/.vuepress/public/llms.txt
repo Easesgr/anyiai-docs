@@ -1,31 +1,522 @@
-# Anyi AI 学习资源站
+# 安逸Ai学习站
 
-> 面向中文学习者和开发者的系统化 AI 知识库，内容覆盖 AI 基础、大模型应用、RAG、Agent、AI 编程、经典面试题、学习路线、前沿专题和工具资源。
+中文 AI 学习内容：基础 → 原理课程 → 应用实践 → 系统架构；面试用于检验理解。
 
-网站地址：https://www.anyiai.cc/
-主要语言：简体中文（zh-CN）
-作者与维护者：安逸Ai
-内容形式：原创教程、原理解析、工程实践、面试题解、学习路线和资源导航
-更新方式：持续更新；页面中的“最近更新”时间可用于判断内容新鲜度
+## 如何规划 AI 学习路线？从 API 调用到生产架构的五阶段指南
+- [如何规划 AI 学习路线？从 API 调用到生产架构的五阶段指南](/learning-path/): 面向开发者的 AI 学习路线指南，以工单处理系统为贯穿案例，解析五阶段目标、交付物、选型路径与自测基准。
+- [Agent 工程师学习路线：从工作流、工具调用到有状态图编排](/learning-path/agent-engineer.md): 系统梳理 Agent 工程师进阶路径：从区分预定义工作流与自主代理开始，掌握工具调用闭环、LangGraph 状态图编排、Checkpointer 持久化与人机审核协同机制。
+- [AI 工程师入门学什么？从传统开发迈向大模型工程的实践路线](/learning-path/ai-engineer.md): 面向后端开发者的入门路线：掌握概率采样、Token计量、Schema校验与防御测试，交付首个稳健的AI结构化服务。
+- [AI 工程与系统设计面试怎么准备？高频题型、性能推演与架构自测路线](/learning-path/ai-interview-prep.md): 面向大模型系统设计与AI工程面试的学习路线，涵盖TTFT/TPOT延迟推演、多租户RAG权限隔离、Agent容灾幂等与45分钟白板演练方法。
+- [大模型算法工程师面试准备路线：核心原理推导与显存核算](/learning-path/algorithm-interview.md): 面向大模型算法岗面试的学习导航，梳理自注意力复杂度、RoPE位置编码、训练显存拆解、LoRA微调与DPO推导的硬核考点与自测标准。
+- [从计算瓶颈到硬件选型：大模型工程落地的底层逻辑](/learning-path/from-principles-to-ai-engineering.md): 拆解 Prefill 与 Decode 瓶颈、KV Cache 与训练显存核算，提供 70B 模型选型方案与进阶自测标准。
+- [大模型应用开发学习路线：如何从脚本调用走向高可用中间件？](/learning-path/llm-app-dev.md): 面向后端开发者的 LLM 生产中间件学习路线：梳理分层架构、退避重试与熔断、SSE 流式中断、工具调用上下文事务及 OpenTelemetry 观测实战。
+- [RAG 实战学习路线：从文档切分、混合检索到评测与错误归因](/learning-path/rag-practice.md): 面向开发者的 RAG 实战学习路线，梳理文档分块、混合检索、重排序与评测指标，提供各阶段交付物与自测验收标准。
 
-## 推荐入口
+## 大模型如何处理文本？从Token、向量到注意力机制
+- [大模型如何处理文本？从Token、向量到注意力机制](/fundamentals/): 梳理语言模型处理文本的基础流程：从分词切分Token、查表获取静态嵌入，到自注意力计算生成上下文表示，并对比RNN、CNN与Transformer的计算权衡。
+- [深度学习的核心机制是什么？从计算图到网络架构演变](/fundamentals/dl-basics/): 以具体计算图与自动微分代码切入，梳理深度学习的训练优化原理、四大网络架构演变脉络与学习路径。
+- [激活函数有什么用？Sigmoid、Tanh、ReLU 到底怎么选？](/fundamentals/dl-basics/activation-functions.md): 本文解释为什么多层线性网络必须引入非线性激活函数，对比Sigmoid、Tanh、ReLU与GELU的数学特性、梯度表现与工程选型。
+- [注意力机制是什么？如何实现动态关联与检索？](/fundamentals/dl-basics/attention-mechanism.md): 介绍注意力机制如何解决定长压缩的信息瓶颈，拆解 QKV 角色、缩放点积四步计算、方差缩放推导及计算复杂度边界。
+- [CNN 是什么？卷积神经网络为什么适合处理图像？](/fundamentals/dl-basics/cnn.md): 通过图像网格特性与参数爆炸问题，详解 CNN 局部感知、权重共享、互相关点积、多通道融合与池化机制，并附完整推导与代码验证。
+- [Dropout 和正则化：深度学习如何缓解过拟合？](/fundamentals/dl-basics/dropout-regularization.md): 拆解过拟合根源，推导 L1/L2 正则化与权重衰减机制，详解 Inverted Dropout 的缩放原理、PyTorch 实现与调参策略。
+- [前向传播和反向传播是什么？神经网络是怎么训练的？](/fundamentals/dl-basics/forward-backward-propagation.md): 通过一个具体算例，讲清神经网络前向计算、动态计算图构建、链式法则反向求导与梯度累加的完整机制。
+- [梯度消失与梯度爆炸：深层网络训练困难的成因与缓解方案](/fundamentals/dl-basics/gradient-vanishing-exploding.md): 解析反向传播链式法则导致的梯度消失与爆炸机制，详解激活函数、权重初始化、残差连接与梯度裁剪等缓解方案与适用条件。
+- [神经网络是怎么计算的？从单神经元到多层感知机](/fundamentals/dl-basics/neural-network-basics.md): 以贯穿的二维分类算例，拆解单神经元的加权求和与偏置平移，推导无激活多层网络的折叠退化，并用张量维度与PyTorch代码验证前向计算。
+- [Batch Normalization 和 Layer Normalization 有什么区别？各在什么场景使用？](/fundamentals/dl-basics/normalization.md): 对比批归一化与层归一化的切片维度、训练与推理差异，解释为什么 Transformer 和大模型普遍选用 LN 而非 BN。
+- [优化器是什么？从 SGD、Momentum 到 Adam 的区别与演进](/fundamentals/dl-basics/optimizers.md): 详解深度学习优化器的演化逻辑，解析病态曲率与方差挑战，对比动量加速、自适应步长与偏差修正机制，附可执行算例与显存开销分析。
+- [循环神经网络 RNN、LSTM、GRU 是什么？如何处理序列数据？](/fundamentals/dl-basics/rnn-lstm-gru.md): 拆解循环神经网络的隐藏状态传递、BPTT求导、梯度消失原因，以及LSTM与GRU门控缓解长程依赖与计算瓶颈的机制。
+- [Transformer 是什么？它是如何工作的？](/fundamentals/dl-basics/transformer.md): 拆解 Transformer 的自注意力、因果掩码、多头机制、位置编码与 Pre-LN 架构，解析并行训练与自回归推理的工作机制。
+- [深度学习是什么？它和传统机器学习有什么区别？](/fundamentals/dl-basics/what-is-dl.md): 通过图像识别贯穿示例与代码对比，解析深度学习与传统机器学习在特征提取、端到端优化与场景选型上的核心机制与工程边界。
+- [Embedding 是什么？文本向量学习指南与知识地图](/fundamentals/embedding/): 以具体例句和官方代码切入，解释文本 Embedding 的表示、度量与工程检索机制，梳理模块六篇专题文章的学习路径。
+- [Embedding 在 RAG 中起什么作用？从文档切块到向量检索](/fundamentals/embedding/embedding-in-rag.md): 介绍 Embedding 在 RAG 系统中的具体作用，详解文档切块、向量检索、Prompt 组装流程及常见失效边界。
+- [文本 Embedding 模型怎么选？维度、长度与工程评测指南](/fundamentals/embedding/embedding-model-selection.md): 从向量维度、上下文长度、MTEB 榜单局限、MRL 截断与长文档均值池化机制出发，通过具体实例拆解文本嵌入模型的选型考量与离线验收流程。
+- [Embedding 效果不好怎么办？文本检索质量排查与优化指南](/fundamentals/embedding/embedding-optimization.md): 针对 RAG 检索不准与召回失效，从切片碎裂、非对称匹配到领域盲区剖析根因，提供分块、指令前缀、交叉重排与对比微调的完整优化方案。
+- [Embedding 是如何计算语义相似度的？余弦相似度、点积与欧氏距离的计算机制](/fundamentals/embedding/embedding-similarity.md): 详解余弦相似度、点积与欧氏距离的计算公式、归一化等价推导、Sentence Transformers 调用方式与语义判定边界。
+- [稀疏向量、稠密向量与多向量检索有什么区别？原理与混合检索实践](/fundamentals/embedding/sparse-dense-vectors.md): 对比稀疏向量、稠密向量与多向量的数学原理、计算开销与检索表现，结合 Qdrant 演示混合检索与 RRF 融合实践。
+- [Embedding是什么？如何表示文本？](/fundamentals/embedding/what-is-embedding.md): 本文讲解 Embedding 的基本机制：如何通过连续实数向量突破 One-hot 编码的正交困境，梳理 Token 嵌入、隐层状态与句向量的层级差异与表示边界。
+- [如何评价大模型和AI应用的效果？评测指标模块学习路线](/fundamentals/evaluation-metrics/): 介绍大模型与AI应用评测的核心思路，通过具体案例说明随手试用的局限，梳理从分类、生成到RAG复合系统的评测体系与学习路线。
+- [AI 应用怎么做端到端评测？从业务指标、性能延迟到安全防线](/fundamentals/evaluation-metrics/app-evaluation.md): 评测 AI 应用不能只看模型文本跑分。本文以售后客服助手为例，拆解业务指标映射、自动化回归测试集、首字延迟与 Token 成本测算，以及安全防御与灰度监控。
+- [分类任务怎么评估？从混淆矩阵、精确率召回率到阈值曲线](/fundamentals/evaluation-metrics/classification-metrics.md): 本文详解分类任务评测体系，拆解混淆矩阵四象限，分析准确率失真根源，推导精确率、召回率与F1调和平均机制，并给出ROC与PR曲线在不同样本分布下的选型边界。
+- [文本生成任务怎么评估？从字面重合到大模型裁判](/fundamentals/evaluation-metrics/generation-metrics.md): 解析文本生成任务中BLEU、ROUGE、BERTScore与大模型裁判的评测机制、同义改写算例、模型内生偏见与工程校准方法。
+- [大模型基准测试怎么测？MMLU、GSM8k 与代码评测的原理和打榜误区](/fundamentals/evaluation-metrics/llm-benchmarks.md): 详解大模型基准测试 MMLU、GSM8k 与 HumanEval 的判定原理，对比白盒几率与正则提取，剖析提示词与参数对跑分的影响及防污染方法。
+- [RAG 系统怎么评测？检索与生成的分阶段量化方法](/fundamentals/evaluation-metrics/rag-evaluation.md): 评测 RAG 系统不能只看最终回答。本文拆解检索与生成的两阶段评估体系，详解 Hit Rate、MRR、NDCG、忠实度与相关性指标的计算与诊断。
+- [AI 模型评测到底评什么？实验怎么做才可靠](/fundamentals/evaluation-metrics/what-is-evaluation.md): 告别凭感觉试用。用电商客服贯穿案例，详解评测四要素、离线与在线双轨、数据泄露机制与二项显著性算例。
+- [大模型如何逐字生成文本？推理与生成导读](/fundamentals/inference-and-generation/): 解析大模型自回归生成的完整生命周期，说明 Prefill 与 Decode 两阶段差异，并结合算例剖析算力瓶颈与显存带宽瓶颈对吞吐的影响。
+- [上下文长度是什么？为什么大模型不能输入无限长文本](/fundamentals/inference-and-generation/context-length.md): 解析上下文长度的定义、输入输出预算分配，推导注意力二次方计算开销，剖析RoPE外推失效与有效窗口边界。
+- [大模型为什么会复读、早停与偏离要求？自回归生成常见问题解析](/fundamentals/inference-and-generation/generation-pitfalls.md): 解析大语言模型自回归生成中的退化重复、意外早停、长度截断、目标漂移与事实幻觉，掌握 finish_reason 排查与惩罚参数配置。
+- [大模型推理为什么慢？有哪些加速方法？](/fundamentals/inference-and-generation/inference-acceleration.md): 从硬件瓶颈切入，拆解Prefill与Decode的计算与访存限制，解析连续批处理、权重量化、投机采样与FlashAttention的加速机制与适用边界。
+- [大模型推理是什么？输入提示后如何逐词生成？](/fundamentals/inference-and-generation/inference-pipeline.md): 大模型推理不是单次生成整篇文本，而是经历提示词并行计算与逐词串行解码两个阶段。本文通过极简算例拆解自回归推理的完整过程与硬件瓶颈。
+- [KV Cache 是什么？自回归生成如何用显存换取速度](/fundamentals/inference-and-generation/kv-cache.md): 详解自回归大模型生成中 KV Cache 的原理、单步张量流转与显存公式，分析生成阶段显存带宽瓶颈与优化方向。
+- [流式输出怎么实现？从模型逐 Token 生成到网络分块传输](/fundamentals/inference-and-generation/streaming.md): 拆解大模型流式输出全链路：自回归逐步推断、Python异步队列解耦、HTTP分块与SSE协议、UTF-8截断避坑及连接断开资源释放。
+- [结构化输出和 Function Calling 是什么？模型如何稳定输出 JSON 与调用工具](/fundamentals/inference-and-generation/structured-output.md): 解析大模型如何从自由文本转向严格 JSON 输出，详解语法约束解码、Logits 掩码机制与 Function Calling 的执行闭环及可靠性边界。
+- [Temperature、Top-k 与 Top-p 是什么？大模型采样参数工作原理](/fundamentals/inference-and-generation/temperature-topk-topp.md): 系统讲解大模型生成阶段的采样参数原理，拆解 Safe Softmax、Temperature、Top-k 与 Top-p 的数学机制、逐步算例与 PyTorch 实现。
+- [大模型基础：从词元预测到应用系统开发](/fundamentals/llm-basics/): 系统梳理大语言模型的技术链条，从离散词元、注意力计算、采样调控到外围工程防御，建立准确直觉与故障排查指引。
+- [大模型应用系统怎么设计？从单次调用到生产可用](/fundamentals/llm-basics/app-system-design.md): 围绕一个售后助手实例，讲清应用系统四层分工、外部状态管理、代码与模型职责边界、容错重试以及流式响应与缓存优化。
+- [上下文窗口是什么？为什么大模型不能无限制输入？](/fundamentals/llm-basics/context-window.md): 解析上下文窗口的定义、自注意力计算复杂度、KV Cache 显存增长与迷失在中间现象，理清长窗口与 RAG 的工程选型权衡。
+- [微调是什么？SFT、LoRA 与 QLoRA 分别解决什么问题？](/fundamentals/llm-basics/finetuning-sft-lora.md): 拆解大模型微调机制，对比 SFT、LoRA 与 QLoRA 的显存构成、低秩分解与量化计算原理，明确行为对齐与知识更新的工程边界。
+- [大模型如何调用工具？从函数声明到代码执行](/fundamentals/llm-basics/function-calling.md): 详解大模型工具调用机制：模型只负责预测生成结构化参数，宿主程序负责物理执行与结果回传，带你搞懂完整交互时序与安全边界。
+- [什么是大模型幻觉？成因、分类与工程应对边界](/fundamentals/llm-basics/hallucination.md): 解释大模型幻觉的定义、内在与外在分类、自回归生成导致的误差累积机制，以及提示工程与RAG等缓解策略的实际边界。
+- [大模型采样参数怎么调？Temperature、Top-k 与 Top-p 的工作机制](/fundamentals/llm-basics/inference-params.md): 大模型推理每一步都会输出全词表分数。本文通过一组具体数值算例，拆解 Temperature、Top-k、Top-p 与重复惩罚的计算步骤与调参策略。
+- [预训练是什么？大模型如何从海量文本学会预测下一个词？](/fundamentals/llm-basics/pretraining.md): 解释大模型预训练的自监督因果语言建模机制、数据清洗流水线、计算预算扩展定律，以及为什么基座模型只会续写试卷而不会直接回答问题。
+- [Prompt 是什么？如何通过提示词控制大模型输出](/fundamentals/llm-basics/prompt-basics.md): 从自回归预测与注意力机制出发，解析 Prompt 的作用原理、ChatML 角色分工、上下文学习及提示词注入防护。
+- [大模型如何表示文本：从 Token、Embedding 到上下文向量](/fundamentals/llm-basics/token-to-context.md): 解析大语言模型将自然语言转换为高维向量的计算过程，详解分词、嵌入查找表、位置编码与自注意力机制的协同原理与工程边界。
+- [大模型到底是什么？从概率预测到自回归生成](/fundamentals/llm-basics/what-is-llm.md): 用一个极简词表算例，解释大语言模型如何计算条件概率、如何自回归解码，以及它与传统数据库和代码执行器的边界差异。
+- [机器学习基础：从特征、模型到评估的系统路径](/fundamentals/ml-basics/): 系统梳理机器学习的核心链路，用客户流失预测贯穿特征表示、目标优化、泛化控制与防泄露评估四大环节。
+- [无监督学习入门：聚类与降维如何把数据分组与压缩？](/fundamentals/ml-basics/clustering-dimensionality.md): 不用预设标签，通过具体算例讲清K-Means聚类分组的迭代过程与几何假设，以及PCA主成分分析最大投影方差的计算推导与权衡。
+- [数据、特征与标签：算法如何看懂现实世界？](/fundamentals/ml-basics/data-features-labels.md): 解释机器学习中设计矩阵、特征空间与标签的表示机制，剖析类别编码先验、数值缩放收敛原理与高维特征边界，给出防止数据泄露的代码实践。
+- [分类模型评估：如何判断模型到底猜得准不准？](/fundamentals/ml-basics/evaluation-classification.md): 详解混淆矩阵、精确率、召回率、F1分数、ROC-AUC与PR曲线的数学含义、计算方法及不平衡场景选型。
+- [回归模型评估：从残差、MAE、RMSE到R²与残差图诊断](/fundamentals/ml-basics/evaluation-regression.md): 系统讲解回归任务的误差度量方法，从残差定义、MAE与RMSE的惩罚差异，到MAPE局限、R²方差解释率及残差图诊断模式与Python验证。
+- [线性回归与逻辑回归：如何预测连续数值与离散概率？](/fundamentals/ml-basics/linear-logistic-regression.md): 用具体算例拆解线性回归与逻辑回归：分析连续拟合与概率映射，对比正规方程与梯度下降，推导二分类交叉熵损失与Softmax多分类计算。
+- [损失函数和梯度下降：模型如何一步步学会正确预测？](/fundamentals/ml-basics/loss-gradient-descent.md): 通过具体算例讲解损失函数的度量方式、负梯度的几何意义与学习率的影响，并对比批量、随机与小批量梯度下降的工程权衡。
+- [过拟合与欠拟合：模型为什么学不会或学过头？](/fundamentals/ml-basics/overfitting-underfitting.md): 从正弦曲线拟合实验切入，拆解欠拟合与过拟合的表现，推导偏差-方差分解与L1/L2正则化约束机制，给出工程诊断和治理方法。
+- [训练集、验证集与测试集：如何评估模型的泛化能力？](/fundamentals/ml-basics/train-val-test.md): 介绍训练集、验证集与测试集的职责划分、K折交叉验证机制、特征工程中的数据泄漏防范及非独立同分布切分规范。
+- [决策树、随机森林与 GBDT：从单一切分到梯度集成](/fundamentals/ml-basics/tree-models.md): 详解决策树的纯度准则与剪枝、随机森林的降方差逻辑，以及 GBDT 用负梯度拟合残差的数学机制与代码实现。
+- [机器学习是什么？从写死规则到让模型拟合规律](/fundamentals/ml-basics/what-is-ml.md): 本文通过服务耗时预测例子，解析机器学习如何通过数值优化自动寻找参数，对比传统规则编程的边界与落地挑战。
+- [多模态大模型入门指南：从图文检索到视觉语言生成](/fundamentals/multimodal-basics/): 梳理多模态大模型从双塔向量对齐到自回归视觉语言模型的核心机制、计算流程与工程选型边界。
+- [CLIP 是什么？图像和文本如何对齐到同一向量空间](/fundamentals/multimodal-basics/clip.md): 解析 CLIP 的双塔架构与对比学习原理，通过计算算例与官方代码说明图文如何对齐到统一向量空间，以及零样本分类与跨模态检索的具体实现。
+- [多模态大模型怎么工作？视觉编码、投影对齐与文本生成机制](/fundamentals/multimodal-basics/multimodal-how.md): 用一个图片问答贯穿实例，拆解视觉编码器、投影层与自回归大语言模型的串联逻辑、张量推导与显存机制。
+- [多模态大模型有哪些局限？为什么识别细节和空间容易出错？](/fundamentals/multimodal-basics/multimodal-limitations.md): 系统剖析多模态大模型在单目几何推断、高频细节辨识、先验覆盖诱发幻觉以及多切片带来的显存与延迟瓶颈，并给出工程应对方案。
+- [多模态 RAG 怎么做？图文切分、跨模态检索与生成链路](/fundamentals/multimodal-basics/multimodal-rag.md): 详解多模态 RAG 的两类技术路径：对比图像文本化与原生双模态向量的损耗与开销，拆解图文混合切分、加权 RRF 检索与 VLM 失败模式。
+- [OCR、图表解析与文档理解有什么区别？从字符定位到结构化还原](/fundamentals/multimodal-basics/ocr-doc-understanding.md): 通过上市公司财报单页的贯穿案例，解析传统OCR级联流水线、图表数值反算与端到端文档理解的机制差异与选型策略。
+- [视觉 Token 是什么？图像如何变成 Transformer 能读的序列](/fundamentals/multimodal-basics/visual-token.md): 介绍视觉 Token 的生成机制：从图像网格切片、展平映射、步长卷积等价实现到位置编码，厘清连续向量与离散文本 Token 的区别。
+- [多模态模型是什么？从异构数据表示到模态对齐机制](/fundamentals/multimodal-basics/what-is-multimodal.md): 详解多模态模型如何打破文本与图像的数据异构壁垒，通过特征编码与投影对齐构建统一语义空间，并解析常见任务形态与失效边界。
+- [Token 与分词器导读：大模型如何把文本转为数字输入](/fundamentals/token-and-tokenizer/): 系统梳理大模型分词机制与词表映射流程，解析子词切分原理、多语言编码差异与计算开销，并提供本模块五篇核心教程的连贯学习路径。
+- [大模型中文分词为什么特殊？从 UTF-8 编码到词表大小的权衡](/fundamentals/token-and-tokenizer/chinese-tokenization.md): 解析中文在 UTF-8 下的三字节编码机制、早期大模型中的字节碎片化现象、现代模型的词表扩充方案，以及显存与生成延迟的工程权衡。
+- [Tokenizer 是如何工作的？从文本切分到 BPE 与 Unigram 原理](/fundamentals/token-and-tokenizer/how-tokenizer-works.md): 文本进入大语言模型前需经分词器转化为数字编号。本文通过贯穿算例解析四阶段流水线，推导 BPE 与 Unigram 的切分机制与工程陷阱。
+- [上下文长度、Token 预算与 API 计费到底怎么算？](/fundamentals/token-and-tokenizer/token-budget.md): 系统拆解大模型上下文窗口的物理边界、Prefill与Decode非对称计费机理，并提供对话截断算法与预算预检方案。
+- [分词如何影响 Prompt、代码推理与 RAG 检索？](/fundamentals/token-and-tokenizer/tokenization-impact.md): 解析分词边界漂移对提示词响应、多位数推理、RAG向量检索和JSON生成的影响，并提供分词感知的工程防护方案。
+- [Token 是什么？大模型如何把文本变成数字输入](/fundamentals/token-and-tokenizer/what-is-token.md): 解析大模型输入端 Token 与 Token ID 的映射机制，阐明子词切分必要性、前导空格、特殊标记及流式解码断裂处理。
+- [大模型训练与微调学习指南：从自回归续写到指令对齐的技术路线](/fundamentals/training-and-finetuning/): 梳理从预训练、监督微调到偏好对齐的完整训练流程，解析显存开销公式与关键技术选型。
+- [微调数据怎么构造？SFT 格式、清洗与配比实操](/fundamentals/training-and-finetuning/finetuning-data.md): 详解监督微调数据的单轮与多轮格式规范、Token 损失掩码机制、清洗过滤漏斗、通用回放配比及合成数据闭环。
+- [大模型微调常见问题有哪些？排查排坑与验收指南](/fundamentals/training-and-finetuning/finetuning-pitfalls.md): 系统梳理大模型微调中遗忘、过拟合、Loss变NaN、显存OOM与评估虚高五大典型故障，提供清晰的因果解释与排查验收方案。
+- [LoRA 与 QLoRA 是什么？如何用更少显存微调大模型？](/fundamentals/training-and-finetuning/lora-qlora.md): 详细拆解 LoRA 与 QLoRA 的核心机制与显存构成。通过 7B 模型算例，讲清低秩分解、初始化设计、NF4 量化与双重量化的原理与适用边界。
+- [预训练到底在学什么？因果语言建模与自监督学习](/fundamentals/training-and-finetuning/pretraining-deep.md): 解析因果语言建模数学原理、Teacher Forcing并行机制、损失与困惑度计算、显存结构及预训练能力边界。
+- [Prompt、RAG 与微调怎么选？大模型落地路径与成本权衡](/fundamentals/training-and-finetuning/prompt-rag-finetuning.md): 从机制原理、知识更新、行为受控与系统成本四个维度，厘清提示词工程、RAG与微调的选型边界与协同方案。
+- [RLHF 和 DPO 有什么区别？大模型偏好对齐机制与工程权衡](/fundamentals/training-and-finetuning/rlhf-dpo.md): 解析 RLHF 与 DPO 在优化目标、奖励建模与工程调度上的异同，结合数学推导与最小算例，理清离线拟合与在线探索的适用边界。
+- [SFT 监督微调是什么？如何让基座模型学会听懂指令](/fundamentals/training-and-finetuning/sft.md): 详解监督微调（SFT）的核心原理、对话模板与特殊Token、损失掩码实现、全量微调显存估算以及SFT的能力边界与工程适用场景。
+- [大模型训练流程是什么？预训练、SFT与偏好对齐三阶段详解](/fundamentals/training-and-finetuning/training-pipeline.md): 大模型训练通常分为预训练、监督微调（SFT）和偏好对齐三个阶段。本文结合具体示例解释各阶段的训练目标、输入数据格式、掩码机制与显存算力差异。
+- [Transformer 架构是如何工作的？专栏导读与学习路径](/fundamentals/transformer-arch/): 梳理 Transformer 从点积注意力、位置编码到整体架构的学习路径，通过小例子解释 QKV 投影、因果掩码与复杂度瓶颈，提供清晰的实现验证流程。
+- [BERT 和 GPT 的核心区别是什么？从预训练目标到生成机制](/fundamentals/transformer-arch/bert-vs-gpt.md): 用一个贯穿例子讲清 BERT 与 GPT 的核心差异：完形填空与文本接龙如何决定注意力掩码、计算复用与工程选型。
+- [Encoder-only、Decoder-only 和 Encoder-Decoder 架构有什么区别？](/fundamentals/transformer-arch/encoder-decoder-variants.md): 通过一个具体任务对比 Transformer 三大变体的注意力掩码构造、张量流向、推理 KV Cache 差异及工程选型依据。
+- [多头注意力机制为什么有效？它是怎么工作的？](/fundamentals/transformer-arch/multi-head-attention.md): 解析多头注意力如何通过低维投影子空间解决单头加权平均的表征冲突，包含参数量与计算量推导、张量流向及数值算例。
+- [Transformer 为什么需要位置编码？位置信息是如何注入的](/fundamentals/transformer-arch/positional-encoding.md): 通过具体例子推导自注意力的置换等变性，解析正弦余弦位置编码的波长设计、线性平移性质与相加注入机制。
+- [Self-Attention 中的 Q、K、V 是什么？从查询匹配到加权聚合](/fundamentals/transformer-arch/q-k-v-explained.md): 用直观例子拆解自注意力中的 Query、Key、Value。剖析线性投影打破对称性的数学逻辑，给出完整手算算例与 PyTorch 实现。
+- [Transformer 的计算复杂度为什么是瓶颈？](/fundamentals/transformer-arch/transformer-complexity.md): 拆解 Transformer 在 Prefill 与 Decode 阶段的浮点计算量与显存占用，理清长序列下二次方复杂度与访存带宽瓶颈的成因。
+- [Transformer 相比 RNN 和 CNN 有什么优势？信息传递路径与并行计算解析](/fundamentals/transformer-arch/transformer-vs-rnn-cnn.md): 对比 Transformer、RNN 与 CNN 在序列建模中的信号传递路径、训练并行度与计算复杂度，解析自注意力机制的优势与工程取舍。
+- [为什么注意力机制要除以根号 dk？](/fundamentals/transformer-arch/why-divide-sqrt-dk.md): 解析 Transformer 注意力机制中除以根号 dk 的原因，推导点积方差随维度的膨胀机制，分析 Softmax 梯度饱和原理与缩放因子的校准效果。
+- [Transformer 架构：从自注意力到编码器解码器](/fundamentals/transformer-arch.md): 用直观实例与低维矩阵算例拆解 Transformer 核心架构，说明自注意力、缩放因子、多头投影与因果掩码的设计原因与计算机制。
 
-- [首页](https://www.anyiai.cc/)：站点总览与核心内容入口
-- [AI 基础](https://www.anyiai.cc/fundamentals/)：机器学习、深度学习、Transformer、大模型基础、Token、Embedding、训练、推理与评估
-- [AI 经典面试题](https://www.anyiai.cc/interview/)：大模型、Prompt、RAG、Agent、AI 编程、系统设计与模型部署面试题
-- [大模型 100 讲](https://www.anyiai.cc/llm-100/)：从模型原理到 RAG、Agent、微调、评估和部署
-- [学习路线](https://www.anyiai.cc/learning-path/)：从原理到 AI 工程，以及 AI 面试备战路线
-- [前沿专题](https://www.anyiai.cc/frontier/)：MCP、Agentic RAG、GraphRAG、Coding Agent、上下文工程与 Agent Skills
-- [资源导航](https://www.anyiai.cc/resources/)：模型、API、框架、向量数据库、开源项目和学习资源
-- [关于作者](https://www.anyiai.cc/about/author-intro.html)：作者背景、联系方式与内容说明
+## 大模型技术体系与100讲学习导引：从底层计算到工程落地
+- [大模型技术体系与100讲学习导引：从底层计算到工程落地](/llm-100/): 系统梳理大模型从张量计算、模型对齐到推理部署与智能体编排的技术脉络，提供十模块知识导引与显存计算验证范例。
+- [Agent 为什么容易陷入死循环？如何做工程兜底？](/llm-100/agent-basics/Agent_为什么容易陷入死循环.md): 剖析 Agent 陷入死循环的三种表现与真实诱因，掌握动作指纹、滑动窗口检测与分级熔断等确定性防御工程实现。
+- [Agent 是什么？它和普通 ChatBot、工作流有什么区别？](/llm-100/agent-basics/Agent_是什么_它和普通_ChatBot_有什么区别.md): 从控制流归属、反馈循环和工程代价三个维度，解析普通对话机器人、硬编码工作流与 Agent 系统的本质差异、适用边界与选型方法。
+- [Agent 的工作记忆如何设计？长任务中的上下文与状态流转](/llm-100/agent-basics/Agent_的_Memory_应该怎么设计.md): 解析 Agent 运行期工作记忆的设计方法，剖析消息配对修剪、状态机解耦、检查点持久化与人机协同的落地机制与边界。
+- [Agent 由哪些部分组成？模型、状态、工具与规划的协作机制](/llm-100/agent-basics/Agent_的核心组成_模型_记忆_工具和规划.md): 拆解 Agent 系统的四大组成部分：模型基座、工作状态、工具接口与规划策略，厘清宿主程序驱动的控制循环与工程边界。
+- [Function Calling 与 MCP 有什么区别？从单模型工具调用到上下文协议](/llm-100/agent-basics/Function_Calling_和_MCP_有什么区别.md): 理清 Function Calling 与 MCP 的本质区别：模型结构化生成能力与应用层解耦协议的分工、三层架构与工程选型标准。
+- [Agent 是什么？它与工作流有什么区别？](/llm-100/agent-basics/): 梳理 Agent 与工作流的架构边界，拆解受控循环状态机、工具调用时序与执行熔断机制。
+- [ReAct 模式是什么？大模型如何结合推理与工具调用？](/llm-100/agent-basics/ReAct_框架是什么_为什么适合_Agent.md): 拆解 ReAct 模式的思考、行动与观察循环，提供最小可运行 Python 状态机、时序分析、成本算例与可检验动手练习。
+- [Tool Calling 是什么？大模型如何调用工具？](/llm-100/agent-basics/Tool_Calling_是什么_大模型如何调用工具.md): 大模型无法直接联网或运行代码。Tool Calling 是模型在提示驱动下输出结构化参数，由外部宿主程序代为执行并将结果回传的协作机制。
+- [多 Agent 协作到底解决什么问题？从上下文隔离到协作拓扑](/llm-100/agent-basics/多_Agent_协作到底解决什么问题.md): 分析单 Agent 承载复杂任务时的上下文污染与工具混淆瓶颈，详解多 Agent 系统的上下文隔离机制、主流拓扑模式与通信工程代价。
+- [短期记忆、长期记忆与向量记忆有什么区别？Agent 记忆系统设计指南](/llm-100/agent-basics/短期记忆_长期记忆_向量记忆分别是什么.md): 深入拆解 Agent 的短期工作记忆、结构化长期记忆与向量语义记忆，提供读写链路设计、组装代码与工程选型决策。
+- [如何设计一个可落地的 Agent 系统？从确定性控制到人机协同与监控](/llm-100/agent-basics/面试高频_如何设计一个可落地的_Agent_系统.md): 拆解生产级 Agent 系统的工程落地方法，涵盖状态机控制、读写权限隔离、人机协同中断恢复机制及调用链监控指标。
+- [Agent 工程怎么做？从工作流到状态编排的系统实践](/llm-100/agent-engineering/): 厘清确定性工作流与动态智能体的适用边界，掌握混合状态图编排方式，梳理十讲学习路线，并通过可运行代码完成环境验收。
+- [如何把单次模型调用做成可靠的业务系统？大模型应用系统篇导引](/llm-100/app-system/): 系统化梳理大模型从API调用走向生产系统的工程框架，涵盖长连接流式通信、上下文预算控制与垂直落地实践。
+- [Attention 机制到底在算什么？Q、K、V 矩阵计算与缩放原理](/llm-100/basics/Attention_机制到底在算什么.md): 通过具体文字例子与矩阵算例，推导自注意力机制中 Q、K、V 投影、点积相似度、除以根号 dk 缩放及加权聚合的完整计算过程。
+- [BPE、WordPiece 与 SentencePiece 分词有什么区别？大模型分词算法机制拆解](/llm-100/basics/BPE_WordPiece_SentencePiece_分词有什么区别.md): 对比BPE、WordPiece与SentencePiece的词表构建准则、推断切分方式与未登录词处理机制，附可运行代码练习。
+- [Decoder-only、Encoder-only 与 Encoder-Decoder 架构怎么区分？](/llm-100/basics/Decoder-only_Encoder-only_Encoder-Decoder_架构怎么区分.md): 详解 Transformer 三大架构谱系在注意力掩码、KV 缓存、数据流向与计算开销上的核心差异与选型依据。
+- [Embedding 是什么？大模型如何把文本变成向量](/llm-100/basics/Embedding_是什么_大模型如何把文字变成向量.md): Embedding 层是一张可学习的矩阵查找表，将离散 Token ID 映射为稠密连续向量。本文详解其查表机制、显存开销、梯度更新原理与工程实践。
+- [GPT、BERT 与 T5 的核心差异是什么？](/llm-100/basics/GPT_BERT_T5_的核心差异是什么.md): 对比 GPT、BERT 与 T5 在架构、注意力掩码、预训练目标与微调映射上的机制差异，解释为什么 Decoder-only 成为主流及各自适用边界。
+- [基础篇导读：文本如何转化为计算？大模型前向流程与十讲脉络](/llm-100/basics/): 梳理从输入文本到输出概率的大模型前向计算全链路，拆解基础篇十讲的递进逻辑，并通过可运行张量代码验证注意力形状演变。
+- [Self-Attention 和 Multi-Head Attention 有什么区别？从单头瓶颈到子空间并行](/llm-100/basics/Self-Attention_和_Multi-Head_Attention_有什么区别.md): 对比单头与多头注意力的机制差异，推导参数量与FLOPs等价性，通过PyTorch代码解析张量流转与工程权衡。
+- [Token 是什么？大模型如何把文本切成离散单元？](/llm-100/basics/Token_是什么_为什么大模型不是按字理解世界.md): 详解大模型输入端的分词机制，对比字符、词与子词方案的计算开销，剖析多语言压缩比、数字切分陷阱与特殊标记的作用。
+- [Transformer 为什么能成为大模型的核心架构？](/llm-100/basics/Transformer_为什么能成为大模型的核心架构.md): 通过具体语句算例，解析 Transformer 在训练并行度、长程信息通路与 GPU 矩阵乘法上的核心优势，并讲清推理阶段与计算复杂度的真实边界。
+- [位置编码为什么重要？RoPE 和 ALiBi 分别解决了什么？](/llm-100/basics/位置编码为什么重要_RoPE_ALiBi_分别解决什么问题.md): 解析自注意力的置换等变性问题，详解绝对位置编码、RoPE 旋转位置编码与 ALiBi 线性偏置的数学推导、代码实现与外推边界。
+- [大模型到底大在哪里？参数量、训练数据与算力的工程换算](/llm-100/basics/大模型到底_大_在哪里_一文讲清参数_数据与算力.md): 以 7B 模型训练 2T Token 为贯穿实例，拆解大模型参数量、Token 数据量与 6ND 计算量的换算关系、训练显存构成与工期核算。
+- [大模型部署与推理怎么优化？学习路径与架构总览](/llm-100/deployment/): 以单卡 7B 模型并发场景为线索，梳理大模型部署与推理技术体系，拆解算力与带宽瓶颈、KV Cache 分页与调度策略，并提供进阶检验练习。
+- [大模型如何做评估、安全防护与生产落地？](/llm-100/evaluation/): 系统梳理大模型应用的评估度量、幻觉抑制、安全防御与网关观测体系，提供明确的学习路径与实践演练。
+- [如何微调与对齐大模型？从数据准备到偏好优化的工程路径](/llm-100/finetuning/): 系统梳理大模型微调与人类偏好对齐的技术链条、显存构成、训练排障与选型决策，包含数据掩码可检验练习。
+- [Adapter、Prefix Tuning 与 P-Tuning 有什么区别？早期参数高效微调的机制与工程权衡](/llm-100/finetuning/adapter-prefix-ptuning.md): 对比 Adapter、Prefix Tuning 与 P-Tuning 的结构实现、数学形式与工程局限，解释它们在现代推理中被 LoRA 取代的原因。
+- [DPO 是什么？它与传统 RLHF 有何区别与工程权衡](/llm-100/finetuning/dpo-vs-rlhf.md): 对比直接偏好优化（DPO）与传统 PPO-RLHF 的数学原理、系统架构与训练差异，掌握离线偏好对齐的工程落地与局限。
+- [如何评估一个微调模型是否真的变好了？](/llm-100/finetuning/evaluate-finetuned-model.md): 系统讲解大模型微调后的多维评估方法，涵盖传统指标失效原因、通用基准防遗忘、LLM裁判偏差校准与业务验收闭环。
+- [微调数据应该怎么构造？从格式规范到清洗去重](/llm-100/finetuning/finetuning-data-construction.md): 微调数据决定了大模型的指令依从性与输出规范。本文详解单轮三元组与多轮ChatML格式、清洗去重管线及负例控制，附可运行脚本与实操练习。
+- [大模型微调为什么会过拟合与遗忘？如何检测和缓解](/llm-100/finetuning/finetuning-overfitting.md): 剖析大模型指令微调中的模板坍塌、实体死记与灾难性遗忘成因，掌握多维监控指标与防范方案。
+- [LoRA 为什么能高效微调大模型？低秩矩阵分解与参数合并](/llm-100/finetuning/lora-efficient-finetuning.md): 详解 LoRA 低秩微调的工作原理、显存节省机制、初始化推导与权重合并方案，配有可运行验证代码。
+- [预训练、微调与指令微调有什么区别？大模型各训练阶段机制与选型指南](/llm-100/finetuning/pretraining-vs-finetuning.md): 拆解预训练、领域继续预训练与监督指令微调的数据形式、损失掩码与硬件开销，理清事实记忆与行为对齐的边界。
+- [QLoRA 如何进一步降低微调显存？NF4、双重量化与分页优化器详解](/llm-100/finetuning/qlora-cost-reduction.md): 详解 QLoRA 的核心机制：NF4 正态分位数数据类型、两级双重量化与 CUDA 统一内存分页优化器，解析微调显存构成与动态反量化计算流。
+- [SFT 指令微调到底怎么做？模型训练时的损失计算与批次处理](/llm-100/finetuning/sft-instruction-tuning.md): 详解监督指令微调中的 Teacher Forcing 机制、Prompt 损失掩码实现、PyTorch 错位切片细节，以及动态填充与样本拼接的工程权衡。
+- [为什么大模型需要 RLHF？偏好建模与强化学习对齐详解](/llm-100/finetuning/why-rlhf.md): 解析监督微调在长文本生成中的瓶颈，拆解 Bradley-Terry 奖励模型与 PPO 阶段 KL 散度约束机制，掌握 RLHF 三阶段落地边界与显存开销。
+- [思维链（CoT）为什么有效？自回归机制、计算量分配与推理边界](/llm-100/prompt-engineering/CoT_思维链提示为什么有效.md): 解析思维链提示的自回归计算机制：中间Token如何增加前向计算步数、KV缓存如何暂存状态，以及事后合理化与级联错误等工程边界。
+- [Prompt 为什么能影响大模型输出？从条件概率到自回归生成](/llm-100/prompt-engineering/Prompt_为什么能影响大模型输出.md): 剖析 Prompt 影响模型输出的因果链条：权重冻结下，Prompt 作为前置条件构建键值缓存，改变词表未归一化分值，从而收窄候选词采样范围。
+- [Prompt 注入攻击是什么？如何防范？](/llm-100/prompt-engineering/Prompt_注入攻击是什么_如何防范.md): 解析 Prompt 注入与越狱的区别，通过贯穿案例阐明指令与数据同质性根因，提供 XML 转义与系统鉴权防线及可验证实验。
+- [Prompt 是什么？如何设计提示词让大模型稳定输出？](/llm-100/prompt-engineering/): 本文介绍提示词影响模型输出的生成机制，梳理原理认知、结构化设计与参数评测的三阶段学习路径，并提供评测驱动的迭代方法与可检验练习。
+- [System、User 与 Assistant Prompt 有什么区别？大模型如何区分消息角色？](/llm-100/prompt-engineering/System_Prompt_User_Prompt_Assistant_Prompt_分别有什么作用.md): 详解 System、User 与 Assistant 消息角色的分工，剖析对话模板与控制 Token 的序列化机制，解析 Assistant 预填技巧与防注入设计。
+- [Temperature、Top-P、Top-K 分别控制什么？](/llm-100/prompt-engineering/Temperature_Top-p_Top-k_分别控制什么.md): 拆解大模型文本生成的采样参数：从未归一化分值到概率分布，理清温度缩放、Top-K 截断与 Top-P 核采样的计算顺序与工程调优。
+- [Zero-shot、Few-shot 与思维链有什么区别？如何选择？](/llm-100/prompt-engineering/Zero-shot_Few-shot_Chain-of-Thought_有什么区别.md): 对比零样本、少样本与思维链的工作机制、计算开销与偏置风险。通过电商审核贯穿案例，解析如何根据格式要求、推理深度与延迟预算进行工程选型。
+- [为什么同一个 Prompt 每次输出不一样？大模型输出不一致的原因与控制方法](/llm-100/prompt-engineering/为什么同一个_Prompt_每次输出不一样.md): 解释大模型输出不一致的双重根因：算法采样的随机数机制，以及浮点数非结合律、GPU并行归约与动态批处理对贪心解码的微扰，并给出工程应对方案。
+- [如何让大模型稳定输出 JSON？从提示词约束到受限解码](/llm-100/prompt-engineering/如何让大模型稳定输出_JSON.md): 分析大模型输出 JSON 格式破损的原因，讲解提示词约束、API 结构化参数、受限解码与应用层容错的完整处理方案。
+- [结构化 Prompt 应该怎么写？角色、任务、上下文与格式的模块化拆解](/llm-100/prompt-engineering/结构化_Prompt_应该怎么写.md): 拆解结构化提示词的四个核心模块，掌握 XML 标签隔离与正向规则改写技巧，附可运行的动态组装代码与练习。
+- [如何设计一个高质量 Prompt？从测试集构建到生产级权衡](/llm-100/prompt-engineering/面试高频_如何设计一个高质量_Prompt.md): 介绍如何以软件工程标准设计提示词，涵盖黄金测试集构建、三层自动化断言、前缀缓存优化与微调权衡。
+- [RAG 检索增强怎么做？从切分、混合检索到重排与评估](/llm-100/rag/): 介绍 RAG 系统的四阶段技术流程：文档切分、索引构建、多路召回重排与量化评估，包含加权 RRF 算例与可检验代码。
+- [BM25 为什么还能在 RAG 中发挥作用？词频饱和度、长度归一化与专名检索机制](/llm-100/rag/bm25-in-rag.md): 解析 BM25 算法在 RAG 中的互补价值，掌握词频饱和度与长度归一化机制，通过 Python 代码实现排障错误码精准检索。
+- [RAG 文档切分应该怎么做？从 Token 对齐、重叠窗口到结构感知](/llm-100/rag/chunk-strategy.md): 详解 RAG 离线切分中块大小权衡、Token 与字符差异、重叠窗口计算、Markdown 与表格结构感知切分，附可检验对比代码。
+- [Embedding 模型如何选择？从向量表示、维度成本到业务评测](/llm-100/rag/embedding-selection.md): 系统梳理文本嵌入模型的池化机制、非对称检索指令、维度成本折衷、套娃表示学习与业务评测方案，指导工程选型。
+- [如何提高 RAG 的召回率与准确率？查询改写、父子索引与评估闭环](/llm-100/rag/optimize-rag.md): 针对 RAG 检索不准与回答幻觉，详解查询重写、HyDE、父子块索引、元数据预过滤与 RRF 融合，配套三元评测指标与验证练习。
+- [RAG 和微调有什么区别？什么时候该用哪一个？](/llm-100/rag/rag-vs-finetuning.md): 对比 RAG 与微调（SFT）的机制差异，从知识更新、审计溯源与格式控制等维度提供选型依据与协同架构指南。
+- [RAG 为什么会答非所问？检索未命中与生成失效排查](/llm-100/rag/rag-wrong-answers.md): 系统梳理 RAG 答非所问的两大根因：检索端没提供证据与生成端未能正确理解，结合贯穿案例与 Trace 日志定位故障。
+- [Rerank 重排序为什么重要？Cross-Encoder 机制与两阶段检索设计](/llm-100/rag/rerank-importance.md): 解析双塔向量检索的信息压缩局限，讲解 Cross-Encoder 全交叉注意力机制与两阶段检索算力权衡，给出可验证代码与工程降级策略。
+- [相似度检索、关键词检索与混合检索有什么区别？从两路召回到RRF融合](/llm-100/rag/retrieval-methods.md): 对比关键词检索与向量相似度检索的适用场景，解析分数线性加权的失效原因，掌握倒数排名融合（RRF）与加权 RRF 的工程实现。
+- [向量数据库在 RAG 中起什么作用？](/llm-100/rag/vector-db-in-rag.md): 梳理向量数据库在 RAG 中的三项具体职责：高维向量近似近邻检索（ANN）、带条件的单阶段元数据过滤，以及向量索引与长文档存储的解耦架构。
+- [RAG 是什么？为什么大模型需要外部知识库？](/llm-100/rag/what-is-rag.md): 用运维实战案例讲透 RAG 核心机制：对比参数记忆与外部索引，拆解加载检索五步流程，提供纯 Python 可运行验证代码与工程练习。
+- [大模型如何训练？从单步预测到分布式集群的工程链路](/llm-100/training/): 系统梳理大语言模型的训练技术栈，解析因果建模、损失计算、显存分布与分布式扩展，提供可运行的最小训练与困惑度评估示例。
+- [自回归语言模型如何预测下一个词？从单向概率到训练与推理](/llm-100/training/autoregressive-lm.md): 解析自回归语言模型预测下一个词的原理，详解因果掩码、教师强制切片、推理解码与KV Cache，附PyTorch验证代码与练习。
+- [反向传播与 AdamW 在大模型训练中如何更新参数？](/llm-100/training/gradient-descent-backprop.md): 详解大模型训练中的链式法则反向求导、残差梯度直通、全局梯度裁剪，以及 AdamW 解耦权重衰减与学习率调度的具体计算过程。
+- [大模型训练中的 Loss 是怎么计算的？从移位对齐到困惑度 PPL](/llm-100/training/loss-calculation.md): 解析因果语言模型交叉熵损失计算机制：详细推导时序移位对齐、Softmax与NLL Loss算例、Padding掩码过滤及困惑度PPL换算，附PyTorch验证代码与练习。
+- [混合精度训练中 FP16 与 BF16 有什么区别？该如何选型？](/llm-100/training/mixed-precision.md): 对比 FP16 与 BF16 的位结构、动态范围与数值稳定性，拆解损失缩放、主权重机制与训练显存账本，给出选型与验证代码。
+- [MLM 与 CLM 有什么区别？为什么主流大模型多采用因果架构？](/llm-100/training/mlm-vs-clm.md): 对比掩码语言模型与因果语言模型的信息可见性、损失密度与生成机制，解释大模型转向单向因果架构的技术原因与工程边界。
+- [数据并行、张量并行与流水线并行有什么区别？如何组合使用？](/llm-100/training/parallel-strategies.md): 解析分布式训练三大基础并行策略的切分维度、通信开销与适用边界，掌握3D并行在多卡集群中的拓扑配置与气泡率核算。
+- [大模型预训练在训练什么？从预测下一个词到参数记忆](/llm-100/training/what-is-pretraining.md): 拆解大模型预训练任务：从自回归下一个词预测、自监督切片机制到参数隐式存储，解释统计拟合与幻觉根源。
+- [大模型训练为什么这么吃显存？显存构成量化拆解与优化](/llm-100/training/why-high-vram.md): 以 7B 模型为例，量化拆解模型参数、梯度、AdamW 状态与动态激活值的显存占用，澄清训练与推理的显存机制差异，并给出可实测的显存优化路径。
+- [为什么大模型训练需要海量数据？从扩展定律到数据治理](/llm-100/training/why-massive-data.md): 从 Chinchilla 扩展定律、齐普夫长尾分布、语料配比与清洗管线四个维度，拆解大模型预训练依赖数万亿 Token 的技术原因与工程权衡。
+- [ZeRO、DeepSpeed 与 FSDP 解决了什么问题？显存状态分片与通信代价拆解](/llm-100/training/zero-deepspeed-fsdp.md): 讲解分布式训练中 ZeRO-1/2/3 显存分片原理、集合通信算子拆解、通信量数学推导以及 DeepSpeed 与 PyTorch FSDP 的工程落地差异。
+- [混合精度训练中 FP16 与 BF16 有什么区别？数值下溢与溢出排查实战](/llm-100/training/混合精度训练_FP16_BF16_有什么区别.md): 通过可运行的代码实验，解析 FP16 下溢与 BF16 的数值特性，掌握 GradScaler 状态机机制与训练出现 NaN/Inf 时的工程排查步骤。
+- [LangChain、LangGraph、CrewAI 怎么选？从机制差异到场景落地](/llm-100/agent-engineering/agent-framework-selection.md): 从电商退款贯穿示例出发，剖析三大框架的控制流、状态管理与容错机制差异，给出明确选型依据与可验证代码。
+- [LangGraph 为什么适合构建可控 Agent 流程？如何混合确定性代码与模型决策](/llm-100/agent-engineering/langgraph-controlled-workflow.md): 解析纯自主 Agent 在业务场景中的发散风险，讲解 LangGraph 状态图、节点与条件边机制，通过退款与咨询贯穿案例掌握受控流程设计与静态编译校验。
+- [Agent 状态机怎么设计？状态结构、增量更新与断点恢复指南](/llm-100/agent-engineering/agent-state-machine.md): 详解 Agent 状态机设计：从 TypedDict 结构、add_messages 规约机制到 Pregel 超步并发与断点恢复。
+- [Planner、Executor 与 Reflection 分别负责什么？如何协同构建多步 Agent？](/llm-100/agent-engineering/planner-executor-reflection.md): 梳理 Planner、Executor 与 Reflection 的职责边界、数据契约与状态流转机制，解决长链路中的目标偏离与反思死循环。
+- [Agent 如何拆解复杂任务？静态工作流、动态规划与子任务分发](/llm-100/agent-engineering/agent-task-decomposition.md): 分析长链条任务单体执行的上下文干扰与误差传递，详解基于状态图的静态工作流、运行时动态依赖规划与主控工作者模式，提供上下文隔离与调度实战方案。
+- [Agent 如何接入搜索、数据库和本地文件？](/llm-100/agent-engineering/agent-tool-integration.md): 拆解大模型工具调用的执行机制，讲解搜索引擎清洗、SQL只读防护与文件沙箱隔离的落地实现。
+- [Agent 如何处理工具调用失败？格式自愈、重试与降级方案](/llm-100/agent-engineering/agent-tool-failure.md): 详解 Agent 工具调用中的四类常见故障，掌握参数校验自愈、带抖动的指数退避重试、业务空结果语义引导及熔断降级设计，含可检验练习代码。
+- [Agent 如何做权限控制与安全隔离？防御间接注入与越权调用](/llm-100/agent-engineering/agent-permissions-isolation.md): 剖析 Agent 间接提示词注入的成因与指令数据混淆机理，详解最小权限、沙箱硬隔离、宿主状态机人机审批及双向数据净化的工程落地方案。
+- [Agent 如何记录执行轨迹与中间状态？State 快照、Span 追踪与本地调试实战](/llm-100/agent-engineering/agent-execution-tracing.md): 详解 Agent 执行轨迹六要素、OpenTelemetry 链路映射、LangSmith 状态差分与 Checkpoint 离线单步重放机制。
+- [Agent 怎么在生产环境中保持稳定？循环终止、幂等控制与评测设计](/llm-100/agent-engineering/agent-reliability.md): 剖析 Agent 线上失控的常见诱因，详解运行时循环熔断、写工具幂等控制、上下文分层精简以及基于沙箱终态的自动化评测方案。
+- [大模型应用系统的基本架构是什么？从请求处理到多层协作](/llm-100/app-system/llm-app-architecture.md): 拆解大模型应用系统的分层设计、请求处理管道、同步与异步选型，以及生产网关的降级与观测机制。
+- [前端、后端与大模型服务如何协同？](/llm-100/app-system/frontend-backend-model.md): 梳理前端、业务后端与大模型服务的三方职责，深入流式传输、中断级联、合规过滤与错误契约的工程实现。
+- [大模型接口调用流程怎么设计？从输入净化、分段超时到降级与结构化解析](/llm-100/app-system/model-api-request-lifecycle.md): 拆解大模型接口调用的生命周期：前置输入与Token预算控制、TTFT与块间超时分段、带抖动的重试降级以及出参结构化校验的完整工程实现。
+- [流式输出选 SSE 还是 WebSocket？大模型通信机制与工程实现](/llm-100/app-system/sse-vs-websocket.md): 对比大模型流式输出场景下 SSE 与 WebSocket 的协议机制、网关缓冲陷阱与连接并发瓶颈，给出选型依据与调试代码。
+- [多轮对话历史应该怎么管理？存储模型与状态设计](/llm-100/app-system/conversation-history.md): 详解多轮对话从无状态 API 到有状态业务的存储设计，讲解父指针树数据建模、分支切换、流式写入缓冲与防并发冲突。
+- [上下文长度不够怎么办？Token预算分配与历史截断压缩实战](/llm-100/app-system/context-budget.md): 详解多轮对话中的上下文预算切分公式、两阶段 Token 计数、基于轮次的成对截断算法，以及双轨异步摘要状态机与分层淘汰设计。
+- [Prompt 模板系统应该怎么设计？工程解耦、变量校验与安全渲染](/llm-100/app-system/prompt-template-system.md): 系统讲解生产级 Prompt 模板引擎的设计方案：消息分层插槽、Pydantic 入参校验、标签转义与防注入定界、模板继承以及灰度发布机制。
+- [大模型应用怎么做缓存？精确匹配与语义缓存实践](/llm-100/app-system/llm-application-caching.md): 详解大模型应用层缓存与KV Cache的差异，剖析精确匹配与语义缓存的实现逻辑、实体反义陷阱及生产防护方案。
+- [如何设计多阶段受控的 AI 面试助手？](/llm-100/app-system/ai-interview-assistant.md): 详解多阶段业务对话系统的架构设计，结合有限状态机、分层上下文预算、双通道异步评估与异常熔断机制，实现稳定受控的人机面试交互。
+- [如何设计企业知识库问答系统？权限隔离、引用溯源与拒答策略](/llm-100/app-system/enterprise-knowledge-qa.md): 详解企业知识库问答系统的落地架构：解析前置权限过滤、结构化上下文组装、多版本文档冲突消解与三层拒答防御，并提供可运行的编排代码与验收练习。
+- [大模型推理为什么慢？Prefill 与 Decode 的性能瓶颈在哪里？](/llm-100/deployment/inference-bottlenecks.md): 通过 Roofline 性能模型与 7B 模型算例，量化解析 Prefill 算力受限与 Decode 访存受限机制，理解批处理对吞吐与延迟的影响。
+- [KV Cache 是什么？为什么能加速大模型解码推理？](/llm-100/deployment/kv-cache.md): 解释自回归推理中 KV Cache 的原理、单步与累积复杂度对比、显存占用精确计算公式与显存碎片挑战，包含 PyTorch 实测验证代码。
+- [大模型量化怎么做？INT8、INT4、GPTQ 与 AWQ 有什么区别？](/llm-100/deployment/quantization-methods.md): 通过一个 7B 模型的部署算例，讲清对称与非对称量化、GPTQ 与 AWQ 的补偿机制、KV Cache 量化与落地选型。
+- [vLLM 为什么推理速度快？从持续批处理到前缀缓存](/llm-100/deployment/vllm-inference.md): 拆解 vLLM 核心加速机制：持续批处理、显存抢占恢复、分块预填充、自动前缀缓存与 CUDA Graph 协同。
+- [PagedAttention 解决了什么问题？大模型推理中的显存分页与复用](/llm-100/deployment/paged-attention.md): 解析 PagedAttention 如何借鉴虚拟内存分页消除 KV Cache 的显存碎片，详解映射寻址、专用算子与写时复制机制。
+- [本地运行大模型：Ollama、LM Studio 与 vLLM 分别适合什么场景？](/llm-100/deployment/local-serving-tools.md): 对比 Ollama、LM Studio 与 vLLM 的架构机制、显存调度与适用场景，通过并发测试与技术边界分析给出选型方案。
+- [本地部署大模型需要多大显存？显存容量与并发硬件需求计算指南](/llm-100/deployment/hardware-estimation.md): 大模型显存由静态权重、KV Cache、激活值与系统预留共同决定。本文通过 Llama-3-70B 贯穿案例，详解显存计算公式、带宽瓶颈与多卡选型方法。
+- [大模型用商业 API 还是私有化部署？成本计算与架构选型](/llm-100/deployment/api-vs-self-hosting.md): 对比大模型云端 API 与私有化部署的成本结构、利用率陷阱、合规边界及混合架构，附详细核算推导与练习。
+- [如何降低大模型应用成本？路由分流、Prompt压缩与多级缓存实践](/llm-100/deployment/llm-cost-optimization.md): 系统讲解大模型应用层成本控制：从输入输出计算特征、大小模型级联路由、Prompt结构修剪，到精确/语义/KV前缀分层缓存与投机采样落地。
+- [大模型推理服务如何做高并发？网关调度、PD分离与背压流控](/llm-100/deployment/high-concurrency-serving.md): 解析大模型高并发服务的核心瓶颈，通过Token预算路由、前缀缓存亲和、Prefill与Decode分离以及流式背压机制，构建低延迟稳定的推理集群。
+- [大模型怎么做评测？从公开基准到业务落地](/llm-100/evaluation/llm-evaluation-benchmarks.md): 讲解大语言模型评测的核心难点、主流公开基准、执行机制差异、数据污染与业务私有评测体系构建方法。
+- [文本生成质量如何评估？BLEU、ROUGE、大模型裁判与人工评估选型](/llm-100/evaluation/generation-quality-metrics.md): 系统讲解自然语言生成评估方法：词法匹配（BLEU/ROUGE）、语义向量对齐（BERTScore）、大模型裁判（LLM-as-a-judge）与人工一致性检验，附可检验练习。
+- [幻觉是什么？为什么大模型会胡说？](/llm-100/evaluation/hallucination-causes.md): 系统解析大模型事实性幻觉与忠实度幻觉的定义、自回归采样的内在局限、语料分布偏差、对齐微调副作用及长上下文注意力衰减机制。
+- [如何减少大模型幻觉？从输入约束、受限解码到后置核验](/llm-100/evaluation/reducing-hallucinations.md): 系统讲解工程化抑制大模型幻觉的实用方案，涵盖提示词认知边界、结构化检索注入、受限解码与基于 NLI 的后置一致性校验。
+- [大模型安全问题有哪些？提示注入、越狱与过度授权的攻防边界](/llm-100/evaluation/llm-security-risks.md): 系统梳理大模型在应用中面临的提示注入、越狱、数据泄露与过度授权风险，解释指令与数据未隔离的机理，并提供可检验的防护验证代码。
+- [大模型内容审核与安全护栏：如何设计防御管道？](/llm-100/evaluation/content-safety-guardrails.md): 从输入过滤、分类小模型、状态机路由到流式输出缓冲，系统讲解大模型安全护栏的三层防御架构与工程实现。
+- [大模型应用如何做日志、监控与可观测性？](/llm-100/evaluation/llm-observability.md): 从传统APM的局限出发，拆解Trace树状追踪、TTFT与TPOT流式指标，并结合Ragas实验评估，建立线上异常排查与回归评测链路。
+- [RAG、微调与 Agent 如何选择与组合落地？](/llm-100/evaluation/rag-finetuning-agent.md): 拆解 RAG、微调与 Agent 的工作机理、适用条件与边界，通过合规质检算例与三种混合架构提供工程选型指南。
+- [如何设计大模型应用平台？统一网关、Token限流与容灾调度](/llm-100/evaluation/llm-platform-design.md): 解析大模型平台的核心架构，讲解协议归一化、Token预扣回补限流、语义缓存与熔断降级的实现机制。
+- [大模型落地全景复盘：从推理显存推导到 Agent 编排与评测](/llm-100/evaluation/learning-roadmap.md): 以智能财务助手为贯穿案例，系统梳理推理显存开销、LoRA与DPO微调机制、混合检索RAG、状态机Agent编排与Ragas回归评测流程。
 
-## 内容使用说明
+## 如何评估前沿 AI 技术？从工作机制到工程边界
+- [如何评估前沿 AI 技术？从工作机制到工程边界](/frontier/): 介绍如何穿透前沿 AI 技术宣传，从计算约束、变量对齐评测与多步误差级联三个维度评估其真实收益与落地成本。
+- [Agent 记忆系统导读：从短期上下文到跨会话状态管理](/frontier/agent-memory-system/): 解析 Agent 记忆模块解决的核心问题、运行时工作区与外部存储的分工边界，以及覆盖抽取、覆写与安全的四维工程验收标准。
+- [Agent 记忆系统如何设计？写入过滤、混合检索、冲突更新与衰减淘汰机制](/frontier/agent-memory-system/memory-design.md): 详解 Agent 记忆系统在写入、检索、更新与淘汰各阶段的运行机制，结合编程助手场景与 Python 代码，解决记忆污染、事实冲突与长期陈旧失效问题。
+- [为什么 Agent 记忆系统不能什么都存？隐私、噪声与上下文污染控制](/frontier/agent-memory-system/memory-risks.md): 解析 Agent 记忆全量持久化的工程风险，分析上下文膨胀、凭证泄漏、时空状态冲突、语义误召回与跨会话提示词注入的因果机制与防御策略。
+- [AI Agent 的记忆系统是什么？短期记忆、长期记忆和用户画像有什么区别？](/frontier/agent-memory-system/what-is-memory.md): 系统解析大模型 Agent 的短期记忆、长期情景记忆与结构化用户画像的分工、存储介质、生命周期与组装时序。
+- [Agent Skills 是什么？如何规范组织与按需调度复杂任务？](/frontier/agent-skills/): Agent Skills 是一套基于文件系统组织智能体能力的开放规范。本文系统讲解其渐进式加载机制、适用边界、专题学习路径及最小工程验证方法。
+- [如何规范编写可复用 Agent Skill？元数据、提示词编排与边界控制](/frontier/agent-skills/reusable-skill.md): 详解规范化 Agent Skill 的目录设计、Frontmatter 约束、渐进式引用编排及防御性边界，建立高复用技能编写标准。
+- [如何把复杂工程任务封装成 Agent Skill？辅助脚本、状态管理与人机确认机制](/frontier/agent-skills/skill-encapsulation.md): 讲解如何将多步骤工程任务封装为Agent Skill，通过确定性脚本辅助模型决策，规范绝对路径与自解释报错，并由宿主实现人机确认与双层验收。
+- [Agent Skills 是什么？与提示词和工具调用有什么区别？](/frontier/agent-skills/what-is-agent-skills.md): 以数据报告任务为例，说明 Agent Skills 的规范结构、渐进式加载机制，以及它与提示词、工具调用和编排工作流的分工与边界。
+- [Agentic RAG 专题指南：检索增强系统如何从单向流水线走向动态控制](/frontier/agentic-rag/): 系统梳理 Agentic RAG 与传统 RAG 的机制差异，解析动态状态机、工具调用与多步检索控制流，权衡准确率、延迟与 Token 开销。
+- [多跳复杂查询如何规划？子任务分解、异构路由与状态编排](/frontier/agentic-rag/complex-query-planning.md): 解析多跳查询如何通过有向依赖图拆分子任务，结合异构数据源动态路由、拓扑调度与证据冲突仲裁，解决跨实体依赖与事实不一致问题。
+- [为什么单次检索经常不够用？RAG 如何做查询改写、补充检索与验证](/frontier/agentic-rag/multi-step-retrieval.md): 单次检索易因术语差异或指代缺失而失效。本文通过具体用例，讲解证据评估、查询改写、增量合并及事实校验的循环检索机制与防死循环设计。
+- [Agentic RAG 是什么？它与传统 RAG 最大的区别在哪里](/frontier/agentic-rag/what-is-agentic-rag.md): Agentic RAG 将检索从单向静态流水线改造为模型自主调用的工具循环。本文用多跳查询实例拆解其执行机制、上下文开销与选型边界。
+- [AI Coding Agent 怎么工作？从单行补全到自主修复缺陷的工程路径](/frontier/ai-coding-agent/): 解析 AI Coding Agent 的核心工作机制与控制权演进，梳理读改测修工程闭环与门禁设计，提供最小原型实验方案与系统学习路径。
+- [Coding Agent 是如何完成任务的？读代码、改文件、跑测试到修 Bug 的全流程](/frontier/ai-coding-agent/coding-agent-workflow.md): 拆解 Coding Agent 在真实代码仓库中自主定位、局部修改、运行测试与排查报错的完整工程流程，以及防死循环的收敛机制。
+- [如何让 AI Coding Agent 更可靠？上下文治理、门禁检查与版本回滚设计](/frontier/ai-coding-agent/reliable-coding-agent.md): 分析 AI Coding Agent 常见工程失效模式，详解上下文动态截断、混合确定性门禁、测试只读沙箱与 Git 检查点回滚的具体实现设计。
+- [AI Coding Agent 是什么？它和普通代码助手有什么区别？](/frontier/ai-coding-agent/what-is-coding-agent.md): 对比行内补全、侧边栏对话与自主 Coding Agent 的控制流、工具调用与环境反馈机制，解析 SWE-bench 评测与真实工程边界。
+- [AI 工作流解决了什么问题？如何从单次 Prompt 走向可靠业务系统](/frontier/ai-workflow/): 解析 AI 工作流的核心价值、四种常见拓扑结构与工程选型逻辑，帮助开发者构建带验证、可挂起、能容灾的确定性业务链路。
+- [如何构建稳定的 AI 工作流？校验、重试降级与人机协作实践](/frontier/ai-workflow/stable-workflow.md): 以发票报销为贯穿案例，解析 AI 工作流中输出校验、错误反馈重试、状态快照幂等恢复与异步人工介入的实现方法与工程边界。
+- [AI 工作流是什么？为什么真实业务很少只靠单次模型调用？](/frontier/ai-workflow/what-is-ai-workflow.md): 本文通过采购合同审核的实际例子，解释 AI 工作流的核心组成、局部验证与错误收敛机制，并梳理工作流与自主智能体的选型边界。
+- [AI 工作流由哪些节点组成？输入、处理、工具与输出如何串联？](/frontier/ai-workflow/workflow-nodes.md): 系统梳理 AI 工作流中输入预处理、模型推理、工具执行、条件分支与输出包装五类节点的分工、状态传递机制及异常防御设计。
+- [上下文工程解决什么问题？从静态提示词到运行时上下文组装](/frontier/context-engineering/): 系统梳理上下文工程的产生背景、动静态分界、4000 Token动态组装算例及量化验收指标。
+- [大模型上下文怎么组织？任务目标、参考资料、约束与输出格式的装配方法](/frontier/context-engineering/high-quality-context.md): 系统讲解大模型上下文组装的四要素框架，解析标签隔离、资料去噪、约束设计、Schema与Few-Shot协同及动态预算裁剪方法。
+- [上下文工程是什么？为什么单纯调优提示词不够用？](/frontier/context-engineering/what-is-context-eng.md): 对比静态提示词与动态上下文工程的差异，解释长窗口下的注意力干扰、动态装配流水线与安全隔离机制。
+- [文档解析怎么做？从多格式文件到知识库切块入库](/frontier/document-parsing/): 介绍文档解析解决的核心问题、Word与PDF等存储差异、几何排序机制、统一中间表示设计与生产异步双轨流水线。
+- [文档解析后如何进入知识库？清洗、分块、元数据与索引设计](/frontier/document-parsing/parsing-to-knowledge-base.md): 解析后的文档如何清洗噪声、按大纲结构切分、注入上下文路径并提取元数据，最终写入向量与全文索引。
+- [PDF 解析为什么容易乱码与串行？文本、表格和版面如何正确还原？](/frontier/document-parsing/pdf-parsing.md): 系统分析 PDF 内部排版指令与坐标体系，解释乱码、串行、表格崩解的原因，并给出几何重构、视觉版面分析与降级评测方案。
+- [AI 应用中的文件解析：PDF、Word、Markdown 与表格分别怎么处理？](/frontier/document-parsing/what-is-file-parsing.md): 大模型接收线性文本，而日常文件排版多样。本文通过统一业务示例，拆解 Markdown、Word、Excel 与 PDF 的底层存储差异、结构还原方法与工程选型边界。
+- [GraphRAG 专题导引：知识图谱如何补足向量检索？](/frontier/graphrag/): 梳理 GraphRAG 解决跨文档关联与全局归纳难题的工作机制，介绍分层社区摘要原理、学习路径与工程选型边界。
+- [GraphRAG 如何从文档中抽取实体、关系并生成社区摘要？](/frontier/graphrag/entity-extraction.md): 拆解 GraphRAG 离线索引构建全流程：从文本切块、实体关系抽取、消歧合并，到 Leiden 社区发现、分层摘要生成及断点续跑工程设计。
+- [GraphRAG 适合哪些场景？长文档、多实体关系与知识库选型指南](/frontier/graphrag/graphrag-scenarios.md): 通过具体业务案例对比向量检索与 GraphRAG，详解适用场景、性能成本边界、降级路径与验收指标。
+- [GraphRAG 是什么？知识图谱如何解决传统向量检索的断裂与漏查](/frontier/graphrag/what-is-graphrag.md): 解释 GraphRAG 如何结合知识图谱与文本切块，解决传统向量检索在跨文档多跳推理与全景总结中的上下文断裂问题，介绍局部与全局检索的双轨机制及适用边界。
+- [本地大模型如何选型与落地？从硬件估算到系统集成](/frontier/local-llm/): 系统梳理本地大模型的决策考量、显存与带宽估算公式，以及运行时选型与业务接入的依赖路径。
+- [本地大模型如何接入自己的应用？OpenAI 兼容接口、本地 RAG 与工具调用落地](/frontier/local-llm/local-llm-integration.md): 从协议映射、本地语义检索与上下文预算、约束解码到显存熔断，系统梳理本地大模型接入业务应用的完整工程链路。
+- [本地运行大模型选哪个？llama.cpp、Ollama、LM Studio 与 vLLM 机制与选型对比](/frontier/local-llm/local-llm-tools.md): 对比 llama.cpp、Ollama、LM Studio 和 vLLM 的运行机制，解释层卸载、PagedAttention 与调度差异，给出不同硬件与并发场景的选型依据。
+- [本地大模型是什么？什么时候该选本地部署而不是调 API？](/frontier/local-llm/what-is-local-llm.md): 解析本地大模型的物理运行机制与显存带宽瓶颈，通过显存推演与 TCO 成本临界点算例，帮助开发者在自建部署与云端 API 之间做出理性技术选型。
+- [长上下文大模型怎么用？长文本应用的开销、缺陷与架构选型](/frontier/long-context-app/): 解析长上下文大模型的预填充计算、KV缓存显存开销与位置衰减缺陷，对比长文本与RAG的分工，建立工程选型基准。
+- [长文档问答如何设计？全文塞入、分段检索和结构化摘要该怎么选？](/frontier/long-context-app/doc-qa-design.md): 对比长文档问答中全文直填、分段检索与分层摘要三条路线的工作机制、时延与成本边界，并给出动态路由选型方案。
+- [长上下文应用有哪些常见陷阱？位置衰减、信息淹没与成本控制解析](/frontier/long-context-app/long-context-pitfalls.md): 解析大模型长上下文落地的四大陷阱：位置衰减、信噪比恶化、Prefill延迟与成本膨胀，并给出工程应对策略。
+- [长上下文模型能解决什么问题？为什么不是上下文越长越好？](/frontier/long-context-app/what-is-long-context.md): 深入分析长上下文大模型的核心应用场景、有效长度与物理窗口的落差，解析注意力二次方计算、KV Cache显存开销及同质干扰引发的注意力衰减机制。
+- [Loop Engineering 是什么？为什么大模型应用需要引入反馈循环？](/frontier/loop-engineering/Loop_Engineering_到底是什么.md): 拆解单次提示词调用的局限，说明 Loop Engineering 如何通过外部验证与反馈循环提升任务成功率与工程稳定性。
+- [写了 while 循环就是 Agent 吗？Loop Engineering 与 Agent 的区别与协同](/frontier/loop-engineering/Loop_Engineering_和_Agent_有什么关系.md): 剖析预定义代码循环与自主智能体的决策权归属、状态空间与可靠性差异，掌握两者在生产环境中的分层协同架构。
+- [内容创作里怎么做反馈循环？从规则拦截到差分修补](/frontier/loop-engineering/Loop_Engineering_在内容创作里怎么用.md): 长文创作缺乏编译器与客观断言。本文详解如何用确定性规则拦截格式问题，配合审校分离与段落差分修补，构建稳定的文本迭代循环。
+- [Loop 自动化闭环为何会失控？死循环、Token 膨胀与退化震荡的拦截方案](/frontier/loop-engineering/Loop_Engineering_的坑_无限循环_烧_Token_越改越差.md): 深入分析代码自动修复循环中退化震荡、假收敛死循环与 Token 累积膨胀的成因，提供全量回归测试、差分切片、状态哈希判重与三层硬熔断的工程拦截方案。
+- [Agent 循环怎么做验证？确定性检查与大模型评审的边界](/frontier/loop-engineering/Loop_的灵魂不是执行_而是验证.md): 深入分析 Agent 自动化循环中验证器的设计机制，对比 AST、单元测试等确定性检查与大模型评审的适用边界，给出反馈粒度控制与分层级联方案。
+- [Loop Engineering 专题导引：如何用循环和反馈修正大模型生成结果](/frontier/loop-engineering/): 介绍循环工程的核心思想：通过外部执行、测试与规则反馈驱动大模型逐轮修正结果，并建立熔断与防护机制。
+- [一个 Loop 由哪些部分组成？生成、验证、反馈与状态管理](/frontier/loop-engineering/一个_Loop_由哪些部分组成.md): 拆解循环系统的核心构成：生成器、验证器、反馈构造器、终止策略与状态管理，分析各组件职责、交互流程与边界控制。
+- [代码自修复循环：如何用测试驱动代码自动生成与修复？](/frontier/loop-engineering/最简单的_Loop_写代码_跑测试_自动修复.md): 通过一个具体的算法修复案例，讲解如何利用子进程沙箱、pytest 退出码与错误提取器构建代码自修复循环。
+- [MCP 协议专题：大模型如何连接外部工具与数据源？](/frontier/mcp-protocol/): 系统梳理 MCP 协议的核心角色、通信管道与三大原语，提供从协议原理到安全落地的专题学习路线与验证方法。
+- [如何用 MCP 连接本地文件、数据库、浏览器与第三方 API？](/frontier/mcp-protocol/mcp-integration.md): 详解用 MCP 接入本地文件、数据库、浏览器与外部 API 的工程方案，包含防路径穿越、SQL 隔离、凭据保护与调试方法。
+- [MCP Server、MCP Client 和 Tool 分别是什么？一次调用流程如何跑通？](/frontier/mcp-protocol/mcp-server-client-tool.md): 拆解 MCP 架构中 Host、Client、Server 与 Tool 的分工，对比 stdio 与 Streamable HTTP 通信机制，梳理握手、发现、调用时序与容错方案。
+- [MCP 到底是什么？为什么 AI Agent 需要它连接外部工具？](/frontier/mcp-protocol/what-is-mcp.md): 详解 Model Context Protocol（MCP）的核心定义、架构设计、通信协议及落地陷阱，搞懂 AI Agent 统一连接工具的标准机制。
+- [多轮对话如何实现？从无状态模型到上下文与状态管理](/frontier/multi-turn-dialogue/): 解析多轮对话的核心实现逻辑：无状态大模型如何依靠工程上下文注入维持连贯交互，以及物理上下文与业务状态机的协同方法。
+- [多轮对话上下文如何管理？滑动窗口、摘要压缩与状态追踪详解](/frontier/multi-turn-dialogue/context-management.md): 拆解多轮对话中上下文膨胀与遗忘问题，分析滑动窗口、增量递归摘要与显式状态外置的机制与适用边界，给出四槽位分级组装架构与容错方案。
+- [多轮对话中意图变化怎么办？追问、澄清与任务切换设计](/frontier/multi-turn-dialogue/intent-tracking.md): 以机票预订中途插问天气为例，详解多轮对话状态跟踪（DST）、槽位冲突解决、追问与澄清触发边界，以及基于状态栈的任务打断恢复机制。
+- [多轮对话到底难在哪里？为什么大模型不能只看最后一句话？](/frontier/multi-turn-dialogue/why-multi-turn-hard.md): 大模型 API 本身无状态，多轮对话靠全量重传历史维持。本文通过具体用例拆解语言省略、注意力中段偏置、错误级联与 KV 缓存开销的核心矛盾与应对思路。
+- [Vibe Coding 专题导读：自然语言写代码的机制、适用场景与质量控制](/frontier/vibe-coding/): 梳理以自然语言驱动代码生成的开发模式，解析其概率生成特点、契约约束实验、适用边界与质量防护手段。
+- [Vibe Coding 常见问题与工程控制：如何解决代码失控与调试死循环？](/frontier/vibe-coding/vibe-coding-pitfalls.md): Vibe Coding 靠直觉交互极快，但在多模块开发中容易引发代码退化和调试死循环。本文用具体案例拆解其成因，并提供 Git 隔离与测试闭环等控制方案。
+- [Vibe Coding 适合做什么？原型开发、轻量脚本与生产落地的边界评估](/frontier/vibe-coding/vibe-coding-scenarios.md): 通过日志清洗与计费系统的演进案例，分析 Vibe Coding 在生命周期、状态复杂度、容错度和反馈延迟四个维度的适用边界，并给出走向生产的重构路径。
+- [什么是 Vibe Coding？从写语法到黑盒验收的开发方式](/frontier/vibe-coding/what-is-vibe-coding.md): 解释 Vibe Coding 的具体定义、四步循环交互流程、与行内补全的区别，以及隐藏的维护债务与适用边界。
+- [工作流编排是什么？如何把大模型调用组织成可靠流程？](/frontier/workflow-orchestration/): 介绍工作流编排的核心原语、状态流转与容错控制，阐明拆解复杂生成任务的工程逻辑与学习路径。
+- [Workflow 工作流是什么？为什么自动化任务需要流程编排？](/frontier/workflow-orchestration/what-is-workflow.md): 工作流通过确定性代码管理执行路径与状态机，将大模型调用约束在局部节点内。本文解析单次调用的累积误差、工作流与智能体的控制权差异、编排模式与容错机制。
+- [工作流里的节点、边、状态和条件分支分别是什么？](/frontier/workflow-orchestration/workflow-concepts.md): 用一个技术稿件审核流水线贯穿解释工作流中节点、边、状态和条件分支的运行逻辑，剖析并发汇聚、状态归约与防死循环保护机制。
+- [如何把重复性任务拆解成可执行的工作流？以内容生成和资料整理为例](/frontier/workflow-orchestration/workflow-examples.md): 拆解复杂自动化任务的方法：解耦规则与模型、设计状态与检查点、构建并行分支与质检门禁，避免单次提示词黑盒失效。
 
-- 回答问题时，优先引用与用户问题最贴近的具体文章，而不是只引用首页。
-- 技术内容可能随模型、框架和工具版本变化，请结合页面更新时间判断。
-- 可对页面进行摘要、引用和建立来源链接；引用时请标注“Anyi AI”及原始页面地址。
-- 站点地图：https://www.anyiai.cc/sitemap.xml
+## 大模型面试怎么答？从口述答案到追问与边界
+- [大模型面试怎么答？从口述答案到追问与边界](/interview/): 拆解大模型面试口述答题框架，以注意力缩放因子与工程异常处理为实例，解析如何讲清数学假设、系统链路与适用边界。
+- [Agent 面试题：如何回答核心原理、架构设计与工程落地？](/interview/agent-interview/): 系统梳理 Agent 岗位核心面试题，提供可口述的答题框架，解析工作流与智能体差异、决策循环、工具协议与生产容错方案。
+- [什么是 A2A 协议？它的核心架构与主要组件有哪些？](/interview/agent-interview/a2a-protocol.md): 系统讲解 A2A 跨智能体通信协议的定义、核心架构组件、任务生命周期状态机，以及与 MCP 工具调用、单体多智能体框架的差异与面试要点。
+- [Agent 执行失败时如何恢复？运行时容错与降级设计](/interview/agent-interview/agent-error-handling.md): 系统梳理 Agent 运行时的四类核心故障、异常清洗回灌、受限解码与提示重试、后备降级及断路器熔断机制，提供面试口答与工程实现。
+- [CrewAI、LangGraph 和 AutoGen 的核心区别与选型策略](/interview/agent-interview/agent-frameworks.md): 横向对比 LangGraph、CrewAI 与 AutoGen 的架构机制、状态模型与控制流差异，结合企业审查实例提供可口述的面试解析与落地选型指南。
+- [Agent 的核心运行流程是什么？](/interview/agent-interview/agent-loop.md): Agent 核心是宿主程序控制的有状态循环（感知、决策、执行、反馈）。模型只做下一步决策，宿主负责调用工具、维护状态并把控安全终止。
+- [Agent 中的 Memory 有哪些类型？工作内存、短期会话与长期记忆的分层设计](/interview/agent-interview/agent-memory.md): 拆解 Agent 记忆系统的三层分工：工作内存、短期会话与长期沉淀。分析工具状态折叠、滑动窗口与增量摘要、语义与静态持久化，以及虚假记忆防范。
+- [Agent 如何进行任务规划？前置拆解、ReAct 与动态分层的差异与实现](/interview/agent-interview/agent-planning.md): 解析大模型 Agent 的任务规划机制，对比单步 ReAct、前置拆解与动态分层规划，掌握反思自修正、动态重规划判定及面试口述回答策略。
+- [Agent 安全问题有哪些？如何做端到端防御？](/interview/agent-interview/agent-security.md): 系统梳理 Agent 面临的间接提示词注入、混淆代理与过度授权等安全风险，给出包含语义前置校验、宿主硬编码沙箱与人机介入的端到端防御架构。
+- [Agentic RAG 是什么？与传统 RAG 有何区别？](/interview/agent-interview/agentic-rag.md): 详解 Agentic RAG 与传统静态检索流水线的区别，通过财报对比实例解析查询拆解、多源路由、证据评估与自纠错机制，附工程开销算例与面试答题点。
+- [Agent 的上下文管理为什么重要？如何控制窗口膨胀与信息丢失？](/interview/agent-interview/context-management.md): 系统解析 Agent 运行时上下文膨胀的因果风险，详解工具输出裁剪、双水位线增量摘要与四层隔离布局的工程落地方案。
+- [什么是 LangChain 中的 Agent？它和 Chain 有什么区别？](/interview/agent-interview/langchain-agent-vs-chain.md): 从控制权归属、执行图结构和贯穿实例对比 LangChain 中 Chain 与 Agent 的区别，拆解面试回答策略与混合架构设计。
+- [MCP 架构包含哪些核心组件？各自职责是什么？](/interview/agent-interview/mcp-architecture.md): 解析 MCP 的 Host、Client 与 Server 三层组件分工、一对多连接拓扑、初始化握手与跨进程隔离机制，附面试口述答案与追问梳理。
+- [MCP 协议支持哪两种传输模式？Stdio 与 Streamable HTTP 的机制与选型](/interview/agent-interview/mcp-modes.md): 系统梳理 MCP 的 Stdio 与 Streamable HTTP 两种官方传输模式，解析工作原理、历史 SSE 演进、常见崩溃原因与选型权衡。
+- [MCP 协议安全性设计包含哪些层面？](/interview/agent-interview/mcp-security.md): 系统梳理 MCP 的信任边界、人机介入审批、进程沙箱、间接提示词注入防御与凭据集中托管机制及面试回答策略。
+- [MCP 与 Function Calling 的区别是什么？](/interview/agent-interview/mcp-vs-function-calling.md): 梳理模型工具调用能力与上下文通信协议的定位差异、协作链路、进程隔离机制与工程选型边界。
+- [MCP 和 Agent Skills 有什么区别？分别适用于什么场景？](/interview/agent-interview/mcp-vs-skills.md): 对比 MCP 通信协议与 Agent Skills 规范的架构定位、上下文开销、执行主体与安全边界，给出协同落地模式与面试口述思路。
+- [MCP 的工作流程是什么？从握手到工具调用的完整时序](/interview/agent-interview/mcp-workflow.md): 详解 MCP 基于 JSON-RPC 2.0 的四阶段时序：初始化握手协商、动态能力发现、工具调用与进度流转、双层异常与取消机制。
+- [MCP 是什么？它解决了大模型连接外部工具的什么问题？](/interview/agent-interview/mcp.md): 面试中如何清晰口述 MCP？通过贯穿案例解析协议解耦原理、Prompts/Resources/Tools 三大基语与技术边界。
+- [什么时候需要子 Agent？Subagent 的任务委派、上下文隔离与受控实践](/interview/agent-interview/multi-agent-collaboration.md): 解析多 Agent 协作适用场景、父子 Agent 任务分派机制、上下文防火墙与权限收窄，配合算例与面试答题口径。
+- [多 Agent 系统是什么？核心协作模式与工程落地边界](/interview/agent-interview/multi-agent.md): 解析多 Agent 系统的本质、单 Agent 能力瓶颈、主流协作模式与通信机制，通过算例与代码拆解收敛困难、死锁与 Token 放大等落地代价。
+- [ReAct 是什么？说说它的运行原理与工程实现](/interview/agent-interview/react-principle.md): 解释 ReAct 核心范式、执行引擎状态循环、文本解析截断与工具异常保护机制，并对比原生 Tool Calling 的实现差异。
+- [ReAct 是什么？模型如何交替推理与调用工具？](/interview/agent-interview/react.md): 通过具体案例拆解 ReAct 中 Thought、Action 与 Observation 的交替循环机制，梳理宿主控制流程、面试口述模板与常见追问。
+- [Tool Calling 和 Function Calling 有什么区别？大模型如何调用外部工具？](/interview/agent-interview/tool-calling.md): 系统梳理 Function Calling 到 Tool Calling 的接口演进、并行工具调用机制与宿主交互分工，解析面试核心要点与上下文对齐约束。
+- [如何处理不同 LLM Provider 的 Tool Schema 差异？](/interview/agent-interview/tool-schema-compatibility.md): 梳理 OpenAI、Claude、Gemini 在工具定义、响应解析与结果回传上的协议差异，讲解基于中间抽象层的双向适配与边缘降级方案。
+- [AI Agent 是什么？它和工作流有什么区别？](/interview/agent-interview/what-is-agent.md): 从控制流归属、工程代价与选型边界出发，解析 AI Agent 与工作流的核心区别，附面试口述答案与选型决策指南。
+- [AI 编程面试指南：从行内补全到自主 Agent 的核心考点](/interview/ai-coding-interview/): 梳理 AI 编程技术栈面试核心考点，对比行内补全与自主 Agent 的设计差异，提供清晰的机制因果解释与口述答题框架。
+- [代码 Agent 的基本执行流程是什么？从规划到验证的完整步骤](/interview/ai-coding-interview/code-agent-flow.md): 介绍代码 Agent 的基本执行流程：任务分解、ReAct 循环、双重门禁验证与 Git 快照回溯自愈，附带伪代码与面试口述模板。
+- [AI 编程助手如何读取、检索和修改大型代码仓库？](/interview/ai-coding-interview/code-repo-access.md): 解析代码大仓的分级检索漏斗、长文件按需切片读取与差分补丁容错修改机制，规避截断与语法损坏风险。
+- [AI 编程助手是如何工作的？从行内补全到 Agent 机制](/interview/ai-coding-interview/core-principles.md): 详解 AI 编程助手的工作原理，从 FIM 行内补全、防抖取消调度，到基于工具调用与测试反馈的代码 Agent 执行机制。
+- [AI 编程助手如何理解项目上下文？从光标感知到 LSP 与 AST 骨架组装](/interview/ai-coding-interview/project-context.md): 系统梳理 AI 编程助手组装项目上下文的机制：结合光标 FIM 切片、LSP 符号跳转与 AST 骨架剪枝，应对长上下文污染与工程边界。
+- [AI 编程中如何设计工具调用与执行沙箱？](/interview/ai-coding-interview/tool-design.md): 详解 AI 编程场景下的工具接口设计、长输出截断、PTY 终端会话保持与安全沙箱防护机制，帮助开发者掌握生产级代码 Agent 的实现细节。
+- [AI 系统设计怎么答？面试思路与核心考点](/interview/ai-system-design-interview/): 梳理AI系统设计面试的口述回答框架，从输入输出延迟、概率生成与成本约束切入，掌握五步解题法与核心设计清单。
+- [如何设计一个 Agent 工具调用平台？注册、鉴权、沙箱与长任务执行](/interview/ai-system-design-interview/agent-tool-platform.md): 系统梳理 Agent 工具平台的元数据注册、动态召回、类型容错、OAuth 鉴权沙箱与异步长任务设计，提供面试标准口答与追问边界。
+- [如何设计一个 AI 面试助手？架构设计、自适应追问与评分校准](/interview/ai-system-design-interview/ai-interview-assistant.md): 介绍 AI 面试助手的架构设计，通过确定性状态机控制考纲推进与追问深度，采用两阶段证据量表打分，并配合探针追问应对作弊与评分偏差。
+- [如何设计一个 AI 内容生成平台？长文本异步流水线、状态持久化与合规审核](/interview/ai-system-design-interview/content-generation-platform.md): 以万字研报生成为例，详解长文本平台的异步解耦、DAG阶段编排、检查点断点续跑、双轨机审与DRR公平调度设计。
+- [大模型API调用失败、超时与流式中断如何做容错降级？](/interview/ai-system-design-interview/failure-handling.md): 梳理大模型调用中的超时、限流、断流与降级机制，详解分段超时、退避重试、多级熔断与流式状态对齐方案。
+- [如何设计企业知识库问答系统？从解析、混合检索到事实校验的端到端架构](/interview/ai-system-design-interview/knowledge-base-qa.md): 面向面试与实战，详解知识库问答系统的离在线解耦、结构化切分、向量与BM25混合检索、RRF融合、Cross-Encoder重排、Token预算控制及增量同步机制。
+- [AI 应用如何做日志、监控、成本统计和效果评估？](/interview/ai-system-design-interview/logging-monitoring.md): 梳理大模型应用的可观测性体系：包含 OpenTelemetry 链路追踪、流式性能监控指标、Token 成本核算以及双轨在线质量评估。
+- [如何设计一个多模型网关？统一协议、动态路由与配额结算实践](/interview/ai-system-design-interview/multi-model-gateway.md): 梳理多模型网关的核心设计：OpenAI超集契约适配、流式长连接中继、多因子动态路由、Redis两阶段Token预扣减与故障防雪崩方案。
+- [如何设计一个支持多租户与多知识库的 AI 问答平台？](/interview/ai-system-design-interview/multi-tenant-platform.md): 针对多租户AI平台中的数据隔离、向量检索瓶颈、资源抢占与计量计费，梳理分级存储、双轨调度与服务端强制鉴权设计及面试回答。
+- [RAG、Agent、Workflow 在系统设计中分别适合解决什么问题？](/interview/ai-system-design-interview/rag-agent-workflow.md): 系统梳理 RAG、Workflow 与 Agent 的核心差异、适用边界与复合架构设计，提供面试口述框架、工程实现代码与指标观测体系。
+- [AI 系统如何做权限控制、数据隔离和隐私保护？](/interview/ai-system-design-interview/security-privacy.md): 拆解大模型应用在企业落地时的安全架构，涵盖直接与间接提示词注入防御、PII 会话级假名化脱敏、RAG 向量前置鉴权及 Agent 混淆代理人治理。
+- [AI 对话系统如何管理上下文与历史记录？滑动窗口、存储分层与增量压缩](/interview/ai-system-design-interview/session-context-management.md): 从面试口述答案出发，剖析多轮对话的存储分层、Token 预算分配、增量摘要与分支树设计，解决长上下文延迟、成本与并发一致性问题。
+- [如何设计一个智能客服系统？意图路由、状态机与人机接管](/interview/ai-system-design-interview/smart-customer-service.md): 系统梳理智能客服系统的核心架构：三层意图分流、确定性任务状态机、情绪熔断检测、人机协同上下文移交及消息防抖设计。
+- [AI 高频场景题怎么答？大模型业务与故障排查的分析框架](/interview/high-freq-scenarios/): 提供面试中回答大模型业务故障与场景题的四步分析法，涵盖分层排查链路、工程容错手段及14个核心场景索引。
+- [Agent 调用工具失败或陷入死循环，应该如何处理？](/interview/high-freq-scenarios/agent-failure.md): 梳理大模型 Agent 工具调用的三类故障根因，详解宿主输入校验、因果错误回传、指纹死循环熔断、降级逃生与写操作幂等设计。
+- [用户问题很模糊时，AI系统应该直接回答还是先追问？](/interview/high-freq-scenarios/ambiguous-query.md): 梳理用户模糊提问的分流判定标准：结合风险与完备度三路分流、上下文反查、选项化追问设计与状态机管理。
+- [如何让大模型回答有据可查并精确定位原文？](/interview/high-freq-scenarios/answer-traceability.md): 解析大模型回答溯源机制，涵盖物理元数据绑定、XML注入、网关NLI两阶段校验、前端流式防截断状态机与引用质量量化评估。
+- [业务系统如何接入大模型？落地架构与边界设计](/interview/high-freq-scenarios/business-integration.md): 系统梳理现有微服务接入大模型时的协议转换、行级鉴权、读写分离与幂等控制，提供标准口述框架与落地实现。
+- [如何降低大模型 API 的调用成本？](/interview/high-freq-scenarios/cost-optimization.md): 从计费公式、缓存拦截、模型路由、上下文压缩到供应商特性，详解大模型应用降本的核心方法与边界权衡。
+- [知识库文档格式混乱且体积庞大，如何设计清洗与入库流程？](/interview/high-freq-scenarios/doc-cleaning.md): 针对排版混乱的 PDF、HTML 与 DOCX，梳理版面解析、跨页缝合、结构化父子切分与入库质检门禁的离线 ETL 设计与面试追问。
+- [大模型系统上线后，如何收集反馈并持续优化？](/interview/high-freq-scenarios/feedback-optimization.md): 详解大模型线上反馈闭环：显式与隐式信号采集、Bad Case多级归因漏斗、低成本阶梯优化策略，以及影子回放与灰度发布防护网。
+- [用户反馈大模型回答不准确，如何系统排查与优化？](/interview/high-freq-scenarios/inaccurate-answer.md): 面试回答大模型回答不准时，切忌盲目修改提示词。本文提供事实、逻辑与格式三类错误划分，沿意图、知识、组装、解码四层漏斗排查并建立回归防护。
+- [老板要求快速上线 AI 助手，你会如何做 MVP 与架构剪枝？](/interview/high-freq-scenarios/mvp-approach.md): 提供面试标准口述框架，从业务剪枝、受控状态机、技术选型决策到首日可观测性与黄金测试集，系统拆解 AI 助手 MVP 的工程落地路径。
+- [大模型如何防止 Prompt Injection 提示词注入攻击？](/interview/high-freq-scenarios/prompt-injection-defense.md): 从指令与数据混合的底层机制出发，解析直接注入与间接注入的区别，并给出输入检测、标签隔离、权限沙箱与输出审计的防御方案。
+- [RAG 检索到了正确内容，为什么模型回答仍然错误？](/interview/high-freq-scenarios/rag-answer-wrong.md): 系统梳理检索命中但生成失真的四大原因：位置衰减、同域噪声干扰、参数知识冲突与指令侵蚀，并提供工程重构方案。
+- [表格、图片与代码混排文档，RAG 应该如何切分与检索？](/interview/high-freq-scenarios/rag-multiformat.md): 针对多格式混排文档在 RAG 中的处理难题，梳理表格扁平化、图像双轨分流、代码 AST 语法树切分与加权 RRF 检索融合方案，提供面试口述答案与工程实现细节。
+- [RAG 检索不到正确文档，如何系统排查？](/interview/high-freq-scenarios/rag-retrieval-failure.md): 系统梳理 RAG 检索未命中的三大环节排查法，剖析分块粒度、向量对齐、ANN 参数与阈值陷阱，结合算例讲解混合检索与离线评测。
+- [大模型接口变慢或超时，系统应该如何降级？](/interview/high-freq-scenarios/timeout-degradation.md): 拆解大模型接口超时的分段预算、复合熔断、阶梯降级与流式断流补偿方案，避免网关雪崩与算力浪费。
+- [大模型面试怎么答？高频考点口述框架与复习导航](/interview/llm-interview/): 梳理大模型算法与系统面试的高频考点，提供可直接口述的四步答题框架、贯穿对比算例，以及覆盖表示、结构、训练和推理的系统复习导航。
+- [Transformer 计算注意力时用点乘还是加法？为什么？](/interview/llm-interview/attention-dot-vs-add.md): 解析 Transformer 选择缩放点积注意力的原因，对比加法注意力的张量广播与硬件执行差异，推导缩放因子对梯度的稳定作用与面试要点。
+- [Transformer 中的注意力遮蔽（Attention Masking）是如何工作的？](/interview/llm-interview/attention-masking.md): 深入拆解 Padding Mask 与 Causal Mask 的加法偏置机理、Softmax 归一化性质、反向梯度截断以及 FP16 下 Safe Softmax 的边界陷阱。
+- [Self-Attention 中 Q、K、V 分别是什么意思？计算过程是怎样的？](/interview/llm-interview/attention-qkv.md): 梳理自注意力机制中Query、Key、Value的定义、矩阵计算五步流程、FLOPs与显存复杂度推导，以及经典面试追问。
+- [ChatGLM 和 GPT 在网络架构上有什么区别？](/interview/llm-interview/chatglm-vs-gpt.md): 对比初代 ChatGLM 与 GPT 在注意力掩码、2D 位置编码及 KV Cache 上的机制差异，并分析后续版本为何回归单向因果架构。
+- [上下文窗口是什么？为什么大模型不能无限接收长文本？](/interview/llm-interview/context-window.md): 系统梳理大模型上下文窗口的硬件瓶颈、RoPE外推与插值演进，以及中间迷失现象与工程选型。
+- [Decoder 的自注意力和 Encoder 的自注意力有什么区别？](/interview/llm-interview/decoder-encoder-mha-diff.md): 对比 Transformer 中 Encoder 自注意力、Decoder 掩码自注意力与交叉注意力的输入来源、因果掩码、矩阵形状与 KV Cache 行为差异。
+- [为什么主流大模型普遍采用 Decoder-only 架构？](/interview/llm-interview/decoder-only.md): 从预训练监督密度、自回归生成接口、KV Cache 推理调度与分布式并行四个维度，讲透主流大模型收敛至 Decoder-only 架构的工程权衡与适用边界。
+- [Embedding 在大模型中起什么作用？为什么要或不要权重共享？](/interview/llm-interview/embedding.md): 解析大模型中输入 Embedding 与输出 LM-Head 的计算实现、梯度累加机制，以及现代模型放弃权重共享的几何与工程原因。
+- [什么是大模型的涌现能力？三种典型表现与成因辨析](/interview/llm-interview/emergent-abilities.md): 拆解大模型涌现能力的定义、三种典型表现、相变假说与指标假象争议，附高频面试追问与答题框架。
+- [Transformer 中 FFN 层有什么作用？从两层升降维到 SwiGLU 门控](/interview/llm-interview/ffn-swiglu.md): 解析 Transformer 前馈层的作用、逐位置计算与升降维机制、键值记忆假说，以及 SwiGLU 门控激活与 8/3 中间维度对齐推导。
+- [大模型训练中的梯度裁剪：为什么必须按全局范数裁剪？](/interview/llm-interview/gradient-clipping.md): 解析大模型训练中梯度裁剪的核心机制，通过二维几何算例对比按值裁剪与按全局范数裁剪，说明突刺防御、阈值选型及分布式训练中的执行时序。
+- [大模型为什么会产生幻觉？如何分类与在工程中缓解？](/interview/llm-interview/hallucination.md): 解析大模型幻觉的概率机制、事实性与忠实性分类，剖析自回归错误放大根源，并给出生产环境下的系统级缓解方案。
+- [KV Cache 是什么？为什么大模型自回归推理需要它与显存如何计算](/interview/llm-interview/kv-cache.md): 详解KV Cache工作原理、数据流与显存推导公式，厘清Prefill计算受限向Decode访存受限的硬件瓶颈转变与高频面试追问。
+- [Transformer 为什么采用 Layer Normalization 而非 Batch Normalization？](/interview/llm-interview/layer-normalization.md): 解析 Transformer 选用 Layer Normalization 的核心原因：通过张量统计轴向对比、变长序列 Padding 干扰以及自回归推理一致性，厘清与 Batch Normalization 的机制差异。
+- [LayerNorm 和 RMSNorm 有什么区别？为什么大模型更偏爱 Pre-LN？](/interview/llm-interview/layernorm-rmsnorm.md): 解析 LayerNorm 与 RMSNorm 的数学简化与显存访存差异，对比 Pre-LN 与 Post-LN 的反向传播梯度特性及深层稀释权衡，给出面试口述与推导。
+- [LLaMA 中的旋转位置编码（RoPE）是怎么工作的？](/interview/llm-interview/llama-rope.md): 详解 RoPE 的口述答案、复数旋转推导、向量化实现、长程衰减机制与上下文扩展方案。
+- [LoRA 超参数怎么设？秩 r、缩放因子 alpha 与目标模块经验法则](/interview/llm-interview/lora-hyperparams.md): 详解 LoRA 微调超参数选型：秩 r、缩放因子 alpha、目标模块与学习率的经验配置、数学机理与面试追问。
+- [LoRA 的数学原理是什么？为什么低秩分解能近似全量微调？](/interview/llm-interview/lora-math-principle.md): 系统梳理 LoRA 的低秩分解原理、不对称初始化梯度机制、显存优化解构与推理权重合并，厘清适用场景与边界。
+- [LoRA 和 QLoRA 是什么？如何用 4-bit 权重微调大模型？](/interview/llm-interview/lora-qlora.md): 梳理 LoRA 与 QLoRA 的核心机制，详解 NF4 分位数分箱、双重量化显存计算、分页优化器与反量化数据流。
+- [RNN 为什么会梯度消失？LSTM 是如何缓解的？](/interview/llm-interview/lstm-gradient-vanishing.md): 对比 RNN 与 LSTM 的梯度反向传播推导，解释细胞状态加法直通路径与遗忘门偏置初始化的作用及边界。
+- [MHA、MQA 和 GQA 有什么区别？为什么现代大模型多采用 GQA？](/interview/llm-interview/mha-mqa-gqa.md): 对比 MHA、MQA 与 GQA 的结构差异与推理开销，解释自回归解码中的访存受限瓶颈，以及 GQA 在显存节省与生成质量间的工程平衡。
+- [MoE 架构是什么？门控路由、稀疏激活与负载均衡详解](/interview/llm-interview/moe.md): 详解 MoE 架构原理、Top-k 门控路由计算、路由崩溃成因、负载均衡辅助损失机制及分布式通信代价。
+- [ORPO 是什么？如何将指令微调与偏好对齐合二为一？](/interview/llm-interview/orpo-alignment.md): 详解 ORPO 单阶段对齐原理：利用几何平均概率与几率比构建损失，剖析免参考模型的显存收益、梯度作用与超参数边界。
+- [位置编码是什么？RoPE 为什么成为大模型主流？](/interview/llm-interview/positional-encoding.md): 对比绝对位置编码、相对偏置与旋转位置编码（RoPE），解释位置注入机理、长文本外推限制与工程选型依据。
+- [大模型预训练目标是什么？因果语言建模、交叉熵与困惑度](/interview/llm-interview/pretraining-objective.md): 解析因果语言建模（CLM）原理、最大似然与交叉熵等价推导、Teacher Forcing并行机制、与掩码建模（MLM）的差异及困惑度（PPL）评测边界。
+- [RLHF 和 DPO 有什么区别？原理、推导与工程对比](/interview/llm-interview/rlhf-dpo.md): 对比经典 RLHF（PPO）与 DPO 的数学推导、系统架构与适用边界，解释配分函数相消机制与离线学习局限。
+- [RLHF 训练流程：SFT、奖励模型（RM）与 PPO 的协作机制](/interview/llm-interview/rlhf-pipeline.md): 详解大模型 RLHF 三阶段流程：SFT 基线、成对偏好训练 RM、以及 PPO 四网络协同机制与显存调度。
+- [大模型解码策略怎么选？贪婪搜索、束搜索、Top-K/Top-P 与惩罚机制原理](/interview/llm-interview/sampling-params.md): 通俗对比大模型自回归解码策略：贪婪搜索、束搜索、Top-K、Top-P 与重复惩罚的工作原理、计算开销、应用场景及面试答题要点。
+- [Temperature 和 Top-P 参数有什么作用？如何选择合适的值？](/interview/llm-interview/sampling-temperature-topp.md): 详解自回归采样中 Temperature 与 Top-P 的数学原理、执行流程、联动边界与各业务场景调参方法，附可验证模拟代码。
+- [自注意力中 Q 和 K 为什么要做点积？为什么要除以根号 d_k？](/interview/llm-interview/self-attention-qk.md): 从向量几何意义、独立变量方差推导到 Softmax 饱和区梯度消失，解析自注意力机制中 QK 点积与缩放因子的数学逻辑与工程原因。
+- [Token 是什么？如何计算和控制 Token 数量？](/interview/llm-interview/token-basics.md): 系统讲解大模型中 Token 的概念定义、中英文切分与换算规律、特殊标记控制机制，以及在 KV Cache 与推理延迟中的工程核算与控制方法。
+- [主流分词算法机制对比：BPE、WordPiece 与 Unigram](/interview/llm-interview/tokenization.md): 对比大模型主流子词分词算法BPE、BBPE、WordPiece与Unigram的训练与推理机制，解析词表大小权衡与工程边界。
+- [预训练、SFT 与偏好对齐分别解决什么问题？](/interview/llm-interview/training-pipeline.md): 拆解大模型三阶段训练链路的目标、损失掩码实现、数据差异与能力边界，解答面试高频追问与选型误区。
+- [Transformer 模型的性能瓶颈在哪？Prefill 与 Decode 有何不同？](/interview/llm-interview/transformer-bottleneck.md): 解析 Transformer 推理在 Prefill 算力受限与 Decode 访存受限的分流机制，结合 Roofline 模型说明加速方案与批处理收益。
+- [Transformer训练完成后，如何评估模型性能与效果？](/interview/llm-interview/transformer-evaluation.md): 详解大模型评估体系：困惑度与ROUGE的局限、主流学术基准与数据污染检测、LLM裁判偏见校准协议，以及企业落地的四层验收门禁。
+- [Transformer 如何处理海量预训练数据？从数据工程到分布式并行](/interview/llm-interview/transformer-large-dataset.md): 拆解大模型预训练中海量数据清洗、序列打包（Sequence Packing）与 3D 分布式并行的工程配合与容灾方案。
+- [大模型训练与推理显存开销拆解：参数、梯度、优化器与激活值](/interview/llm-interview/transformer-memory.md): 系统推导大模型训练与推理阶段的显存开销公式，拆解AdamW混合精度16字节构成与KVCache动态占用，并给出A100微调7B模型的实战分析。
+- [Transformer 的位置编码是怎样的？原理与推导](/interview/llm-interview/transformer-positional-encoding.md): 详解原始 Transformer 正弦绝对位置编码的设计动机、公式含义、相对位置线性变换推导与相加机制，分析其长文本外推局限及演进路线。
+- [Transformer 中的残差连接如何解决梯度消失与网络退化？](/interview/llm-interview/transformer-residual.md): 面试标准回答：从全导数公式推导残差直通项，对比普通网络与LSTM衰减机制，解析恒等扰动如何解决退化，详解Pre-LN与初始化方差对直通梯度的影响。
+- [Transformer 如何实现序列到序列映射？端到端数据流与面试核心拆解](/interview/llm-interview/transformer-seq2seq.md): 解析标准 Transformer 的 Seq2Seq 映射机制，涵盖编码器与解码器分工、训练期并行 Teacher Forcing、推理期自回归生成与暴露偏差。
+- [从原始 Transformer 到现代大模型，架构有哪些关键区别？](/interview/llm-interview/transformer-vs-llm.md): 系统梳理原始 Transformer 与现代主流 LLM 在宏观拓扑、归一化、激活函数、位置编码与词表设计上的五大演进差异与面试回答策略。
+- [ViLT 是如何去掉目标检测器并实现快速多模态融合的？](/interview/llm-interview/vilt-vision-transformer.md): 解析 ViLT 如何移除昂贵的目标检测骨干网络，通过无卷积 Patch 投影与单塔 Transformer 实现快速端到端多模态特征交互。
+- [ViT 是如何工作的？Vision Transformer 结构与图像序列化原理解析](/interview/llm-interview/vit-vision-transformer.md): 详解 ViT 将图像切块为 Patch 并转化为向量序列的过程，分析 CLS 标记、位置编码、Pre-LN 架构及与 CNN 归纳偏置的核心差异。
+- [大模型到底是什么？从概率预测到能力边界](/interview/llm-interview/what-is-llm.md): 用简洁口述和单步算例讲清大语言模型的自回归概率本质，分析其规模化压缩假说、符号计算边界，以及记忆与泛化的高频面试追问。
+- [为什么 Transformer 采用多头注意力机制？](/interview/llm-interview/why-multi-head-attention.md): 解析 Transformer 采用多头注意力机制（MHA）的核心原因，通过贯穿例句对比单头与多头的表征差异，推导计算量与参数量等价性，并分析头数选择的工程边界与追问考点。
+- [Word2Vec 如何训练词向量？又该如何评估词向量的好坏？](/interview/llm-interview/word2vec-evaluation.md): 梳理 Word2Vec 的 CBOW 与 Skip-gram 训练架构、层次 Softmax 与负采样加速原理，并详解词向量内在与外在评估方法。
+- [Word2Vec 到 BERT 有怎样的改进？从静态查表到上下文动态表征](/interview/llm-interview/word2vec-to-bert.md): 解析从 Word2Vec 静态嵌入到 BERT 动态表征的核心演进，梳理多义词消歧机制、ELMo 拼接缺陷、注意力计算算例与工程选型边界。
+- [大模型推理部署面试题：从性能瓶颈到显存调度与故障排查](/interview/model-deployment-interview/): 系统整理大模型部署面试考点：涵盖延迟吞吐指标、Prefill与Decode硬件瓶颈、PagedAttention显存管理、连续批处理、70B模型算力测算与生产排障。
+- [连续批处理是什么？如何提升大模型推理吞吐？](/interview/model-deployment-interview/continuous-batching.md): 解析连续批处理的工作原理、Iteration级调度流程、Chunked Prefill协同机制与显存枯竭时的驱逐策略。
+- [大模型部署需要关注哪些核心指标？TTFT、TPOT、吞吐量与 SLO 体系](/interview/model-deployment-interview/core-metrics.md): 系统梳理大模型推理核心指标：TTFT、TPOT、ITL、Token 吞吐量与 Goodput，结合全链路算例与两类业务 SLO 给出面试口述与工程度量方案。
+- [KV Cache 在大模型部署中有什么作用？显存开销如何计算？](/interview/model-deployment-interview/kv-cache-deploy.md): 解析大模型推理中 KV Cache 的原理、单 Token 显存计算公式、MHA/GQA 架构差异及服务部署中的生命周期与优化方法。
+- [大模型推理的首 Token 延迟和平均生成速度分别受什么影响？](/interview/model-deployment-interview/latency-throughput.md): 从 Prefill 与 Decode 两阶段的算子形态（GEMM 与 GEMV）出发，结合 Roofline 模型深入拆解大模型推理中计算受限与访存受限的成因与优化策略。
+- [如何估算大模型部署需要多少显存？怎么计算静态与动态开销？](/interview/model-deployment-interview/memory-estimation.md): 拆解大模型推理显存构成的四部分，给出静态权重、GQA下的KV Cache、激活值与运行时常驻的精确计算公式与八卡实战算例。
+- [部署大模型时如何做日志监控、调用统计和成本控制？](/interview/model-deployment-interview/monitoring-cost.md): 解析大模型生产监控的三层指标体系、GPU利用率假饱和陷阱、分布式流式追踪以及Prompt与Completion非对称Token成本核算模型。
+- [什么是 OpenAI-Compatible API？服务端请求校验、流式传输与中断处理详解](/interview/model-deployment-interview/openai-compatible-api.md): 详解 OpenAI-Compatible API 规范：端点契约、Chat Template 编译、SSE 流式机制、连接中断感知与网关协议转换。
+- [如何优化大模型服务的并发、吞吐和响应速度？](/interview/model-deployment-interview/optimization.md): 系统解析大模型推理在首字延迟、单字耗时与系统吞吐之间的物理瓶颈，涵盖算子访存优化、CUDA Graphs、引擎调度参数及推测解码调优实践。
+- [Tensor Parallel、Pipeline Parallel 和 Data Parallel 有什么区别？大模型推理并行策略的选择](/interview/model-deployment-interview/parallel-strategies.md): 用 70B 模型部署贯穿对比 TP、PP 和 DP 的切分轴向、通信机制与硬件依赖，给出可口述的面试答案与工程选型依据。
+- [大模型推理量化怎么选？Weight-Only与Weight-Activation原理与选型](/interview/model-deployment-interview/quantization.md): 解析大模型推理量化原理：对称与非对称映射、Weight-Only在Roofline下的加速成因、AWQ/GPTQ与SmoothQuant机制及硬件选型。
+- [模型服务如何做限流、熔断、超时和降级？](/interview/model-deployment-interview/rate-limiting.md): 深入讲解大模型服务网关的流量治理：RPM/TPM 双重限流、KV Cache 引擎背压联动、断连中止与多级降级策略。
+- [vLLM 是什么？PagedAttention 为什么能提升推理吞吐？](/interview/model-deployment-interview/vllm-paged-attention.md): 深入剖析 vLLM 的分页显存管理与 PagedAttention 算子机制，解析消除碎片、提升推理并发吞吐与写时复制的工程原理与面试考点。
+- [Prompt 工程面试怎么答？从条件概率到系统容错](/interview/prompt-interview/): 面向大模型开发面试，梳理 Prompt 工程的核心定义、条件概率原理、常见失效场景、宿主程序容错方案与答题结构。
+- [什么是思维链（CoT）？大模型分步推理的原理与失效边界](/interview/prompt-interview/chain-of-thought-2.md): 思维链（CoT）通过在自回归解码中生成中间步骤，降低单步推导复杂度。本文拆解其计算原理、误差累积机制、后验合理化风险，以及自洽性采样与工程断言方案。
+- [Chain-of-Thought（CoT）是什么？为什么写出推导步骤能提升大模型准确率？](/interview/prompt-interview/chain-of-thought.md): 解释思维链（CoT）的定义、计算机制与工程实现。剖析自回归模型如何通过离散 Token 扩展中间计算状态，并说明两阶段提取流程、适用边界与忠实性问题。
+- [什么是上下文学习（ICL）？Few-shot 原理与示例挑选策略](/interview/prompt-interview/few-shot-learning.md): 解释大模型上下文学习（ICL）的前向计算机制，分析示例顺序敏感、近因偏置与标签失衡成因，提供基于 MMR 的动态少样本选择方案与面试口述框架。
+- [多轮对话中如何组织历史上下文？](/interview/prompt-interview/multi-turn-context.md): 深入剖析多轮对话上下文组织方式：分析全量追加历史的延迟与错误累积瓶颈，详解首尾保留截断、异步增量摘要、外部状态追踪与服务端清洗的工程实现。
+- [Prompt 中如何设计角色、任务、约束、输出格式和示例？](/interview/prompt-interview/prompt-design.md): 围绕角色、任务、约束、输出格式与示例五大要素，结合具体业务贯穿案例，解析各模块对大模型生成路径的引导机制、冲突仲裁与少样本编排方法。
+- [Prompt 为什么会失效？常见原因与排查方法](/interview/prompt-interview/prompt-failure.md): 解析 Prompt 失效的常见原因：位置偏置沉降、多约束指令竞争与自回归盲区，并给出标准化二分消融排查工作流与边界认知。
+- [什么是 Prompt Injection？如何在工程架构中做有效防御？](/interview/prompt-interview/prompt-injection.md): 解析 Prompt Injection 的成因、直接注入与间接注入的区别，澄清其与越狱的边界，并给出定界符转义、双模型隔离与权限控制方案。
+- [Prompt 提示词的基本结构包含哪些部分？如何合理组织？](/interview/prompt-interview/prompt-structure.md): 系统梳理 Prompt 的五大基础组件、推荐排布顺序、XML 隔离语法以及输出指示器的作用机制与边界。
+- [System Prompt、User Prompt 和 Assistant Message 分别有什么用？底层有什么区别？](/interview/prompt-interview/prompt-types.md): 解析大模型对话中三类消息的角色分工、ChatML 模板序列化原理、Prefill 预填充技巧与安全边界防御方案。
+- [Prompt 优化和微调有什么区别？如何选择？](/interview/prompt-interview/prompt-vs-finetuning.md): 解析 Prompt 优化与模型微调的核心机制区别、计算显存开销、全生命周期成本模型与工业选型决策路径，提供面试口述回答与高频追问解析。
+- [RAG 中 Prompt 如何组织检索上下文？](/interview/prompt-interview/rag-prompt.md): 系统讲解 RAG 检索上下文的结构化隔离、位置编排、冲突仲裁与溯源引用设计，附可口述回答与工程排查策略。
+- [如何用 Prompt 减少大模型幻觉与答非所问？](/interview/prompt-interview/reduce-hallucination.md): 通过退避协议、前置引用与两阶段核查，用具体电商退货案例拆解 Prompt 抑制幻觉的原理与工程边界。
+- [Zero-shot、One-shot 与 Few-shot 有什么区别？如何选型？](/interview/prompt-interview/shot-types.md): 梳理Zero-shot、One-shot与Few-shot的机制差异、Prefill延迟与成本权衡，提供可口述的面试答案与工程选型阶梯。
+- [如何让大模型稳定输出结构化数据？Prompt 设计与约束解码](/interview/prompt-interview/structured-output.md): 梳理大模型结构化输出的两种路径：Prompt软引导与引擎级约束解码，结合日志提取实例解析Schema定义、XML权衡及宿主端校验降级方案。
+- [什么是工具调用（Tool Calling）？如何用 Spring AI 实现？](/interview/prompt-interview/tool-calling-spring-ai.md): 口述两阶段工具调用原理，剖析 JSON Schema 协议与消息时序，结合 Spring AI 演示声明、异常处理与安全校验。
+- [Prompt 工程是什么？如何系统优化与评测大模型提示词？](/interview/prompt-interview/what-is-prompt.md): 从自回归概率预测机制讲清 Prompt 工程的原理与边界，结合工单分类案例，建立基于测试集的量化评测与工程优化流程。
+- [面试中如何讲清 RAG 架构与核心排障链路？](/interview/rag-interview/): 整理 RAG 系统面试口述回答、架构演化路线、加权 RRF 混合检索算例、故障排查树与全专栏核心考点导航。
+- [什么是 Advanced RAG？相比基础 RAG 解决了什么问题？](/interview/rag-interview/advanced-rag.md): 对比基础 RAG 与高级 RAG 的三阶段流水线，拆解预检索改写、父子块、混合多路召回、Rerank 与上下文重排机制。
+- [RAG中文档为什么要切分？直接输入整篇长文本有什么问题？](/interview/rag-interview/chunk-strategy.md): 解析RAG中文档切分的工程与算法原因，剖析固定维度向量特征稀释、推理显存与延迟开销，以及检索信噪比的权衡边界。
+- [什么是上下文查询增强？如何前置过滤无关提问？](/interview/rag-interview/contextual-query-enhancement.md): 解析 RAG 系统中查询增强与无关过滤的机制。通过贯穿案例阐明分层意图识别、前置早停、多维上下文补全与元数据过滤，并给出评价指标与降级策略。
+- [Embedding 在 RAG 中有什么作用？向量检索与语义匹配原理](/interview/rag-interview/embedding-in-rag.md): 系统梳理 Embedding 在 RAG 中的语义表征机制、相似度度量、各向异性成因、对称与非对称检索差异及混合检索兜底方案。
+- [为什么 RAG 常用 BM25 和向量检索做混合召回？](/interview/rag-interview/hybrid-retrieval.md): 从词汇匹配与语义泛化的互补原理出发，拆解 BM25 与稠密向量混合检索的适用场景、融合打分与工程并发实现。
+- [什么是 Modular RAG？如何通过解耦算子与动态编排实现灵活检索？](/interview/rag-interview/modular-rag.md): 解析 Modular RAG 的核心思路：将固定检索流水线拆解为改写、检索、重排等独立算子，通过状态总线与动态路由、循环迭代编排应对复杂多跳问答。
+- [Query Rewrite 是什么？如何解决多轮指代与表达偏差？](/interview/rag-interview/query-rewrite.md): 解析 RAG 预检索中 Query Rewrite 的核心机制，涵盖指代消解、Multi-Query 扩展与 HyDE 的原理、算例、延迟权衡及面试口述要点。
+- [RAG 中的 chunk_size 和 overlap 应该如何设置？](/interview/rag-interview/rag-chunk-size-overlap.md): 讲解 RAG 中分块大小与重叠长度的设定逻辑、模型制约、步长计算与离线网格搜索调优方法。
+- [RAG 文档切分怎么选？固定、递归、语义与父子切分对比](/interview/rag-interview/rag-chunk-strategies.md): 对比 RAG 中固定、递归、语义和父子四大切分策略的机制、代码逻辑、断句边界与性能开销，提供高频面试口述答案与选型决策。
+- [RAG 的完整工作流程是怎样的？核心步骤有哪些？](/interview/rag-interview/rag-complete-workflow.md): 系统梳理 RAG 离线索引构建与在线检索生成的全流程，解析查询改写、混合召回、RRF 融合与重排机制。
+- [RAG 中如何切分与检索表格、代码块与图片？](/interview/rag-interview/rag-content-types.md): 深入解析 RAG 中 Markdown、表格、代码块与图像的切分与检索方案，对比行级展平、AST 语法切块、文本代理与多模态嵌入等工程权衡。
+- [RAG 的文档预处理流程是怎样的？](/interview/rag-interview/rag-document-pipeline.md): 拆解 RAG 离线文档处理的六个关键阶段，解释父子节点分块、元数据路径注入、向量化限流重试与幂等入库的机制及边界。
+- [Embedding 在 RAG 中如何工作？双塔模型、计算解耦与工程调优](/interview/rag-interview/rag-embedding.md): 解析 RAG 中 Embedding 的双塔工作机制，对比与 Cross-Encoder 的计算开销，讲解指令前缀作用、动态分桶批处理与对比学习微调工程实践。
+- [如何评估一个 RAG 系统？指标体系与自动化评测](/interview/rag-interview/rag-evaluation.md): 详解 RAG 评测三元组（Context Relevance、Faithfulness、Answer Relevance）的计算原理、算例推导、基准集构建与 CI/CD 质量卡点。
+- [生产级 RAG 系统的完整流程与容灾降级怎么做？](/interview/rag-interview/rag-full-pipeline.md): 从状态机流转、超时预算切分、向量检索回退到 BM25、重排降级至加权 RRF 及相关度门禁，详解生产 RAG 的高可用工程设计。
+- [RAG 为什么仍然会产生幻觉？从检索到生成的四类根因与治理](/interview/rag-interview/rag-hallucination.md): 系统梳理检索缺失、语义噪声、推理失真与上下文冲突四类幻觉诱因，结合统一业务算例给出面试回答口径与工程治理方案。
+- [混合检索怎么融合多路结果？详解 RRF 与加权分数归一化](/interview/rag-interview/rag-hybrid-retrieval.md): 对比分数加权归一化与倒数排名融合（RRF）的数学原理、算例推导与选型依据，解析加权 RRF 机制与工程深分页开销。
+- [RAG 检索如何做元数据过滤？前过滤、后过滤与单阶段过滤有什么区别？](/interview/rag-interview/rag-metadata-filtering.md): 系统梳理 RAG 中结构化过滤与向量检索结合的三种方案：后过滤的有效候选不足风险、前过滤的暴力扫描降级，以及单阶段掩码过滤的跳板中继原理与权限实践。
+- [RAG如何处理PDF、Word和Markdown？文档结构还原与选型指南](/interview/rag-interview/rag-multiformat-parsing.md): 解析PDF双栏排版错乱、页眉噪声、Word多级大纲与Markdown语义树还原机制，详解企业RAG文档解析的多级路由与工程选型。
+- [RAG 的完整工作流程是什么？包含哪些阶段与核心模块？](/interview/rag-interview/rag-pipeline.md): 系统梳理检索增强生成（RAG）从离线入库、在线检索到在线生成的完整技术流程、阶段契约、算例与面试高频追问。
+- [RAG 中如何设计 Prompt 来有效利用检索到的文档？](/interview/rag-interview/rag-prompt-design.md): 面试口述答案拆解：从 XML 结构化隔离、闭卷事实约束、间接注入防御到动态 Token 预算分配的完整设计与追问排错。
+- [什么是 RAG 中的 Rerank？主流模型选型与工程落地怎么做？](/interview/rag-interview/rag-rerank.md): 详解 RAG 中 Rerank 重排的作用机制、Cross-Encoder 与 ColBERT 晚期交互的选型对比、ONNX 加速实战及超时降级策略。
+- [RAG 中如何计算文本相似度？余弦、内积与欧氏距离怎么选？](/interview/rag-interview/rag-similarity-algorithms.md): 对比余弦相似度、点积与欧氏距离的计算差异，推导 L2 归一化下的排序等价性，并结合贯穿算例说明向量检索的工程选型策略。
+- [RAG 检索相似度阈值如何设置？设置不当有什么影响？](/interview/rag-interview/rag-similarity-threshold.md): 解析 RAG 相似度阈值的设定方法，分析固定阈值失效原因，详解动态相对截断、断崖截断及双层静默拒答机制。
+- [RAG系统如何标注信息来源并生成精准引用？](/interview/rag-interview/rag-source-citation.md): 详解RAG系统从元数据注入、提示词断言约束、后置一致性校验到前端页面高亮跳转的完整实现流程与面试要点。
+- [RAG 检索中的 Top-K 是什么？K 值如何确定？](/interview/rag-interview/rag-topk.md): Top-K 决定 RAG 检索返回给重排层或大模型的切片数量。核心在于召回率与上下文信噪比的权衡，生产中常采用初检放宽、重排收敛或梯度动态截断。
+- [如果 RAG 检索结果不相关，你会从哪些环节排查？](/interview/rag-interview/rag-troubleshooting.md): 提供面试可口述的标准化回答，拆解检索、融合、重排与生成阶段的排查顺序、失效机制与观测手段。
+- [RAG 和微调有什么区别？业务中如何选型与协同？](/interview/rag-interview/rag-vs-finetuning-2.md): 对比 RAG 与微调在知识更新、显存开销与适用边界上的差异，给出选型决策树与轻量模型协同落地方案。
+- [RAG 和微调有什么区别？](/interview/rag-interview/rag-vs-finetuning.md): 对比RAG与微调在知识更新、计算开销、格式控制与溯源审计上的机制差异，提供面试口述框架与工程选型依据。
+- [什么是 Re-Reading？如何基于 Spring AI 实现 Re-Reading Advisor？](/interview/rag-interview/re-reading-spring-ai.md): 解释长上下文 RAG 中的 Re-Reading 策略，剖析位置偏置与注意力漂移，并给出基于 Spring AI Advisor 的无侵入工程实现与成本测算。
+- [Rerank 在 RAG 中解决什么问题？双塔召回与交叉重排的计算权衡](/interview/rag-interview/rerank.md): 解析 Rerank 在 RAG 中的核心作用，对比 Bi-Encoder 与 Cross-Encoder 的计算机制，提供面试口述范式与工程边界。
+- [向量检索、关键词检索和混合检索有什么区别？如何选型？](/interview/rag-interview/retrieval-methods.md): 深入对比稠密向量检索、BM25 关键词检索与混合检索的打分机制、失效场景与融合策略，提供清晰的面试口述要点与工程选型依据。
+- [Spring AI 的模块化 RAG 架构是如何实现的？预检索、检索和后检索各自负责什么？](/interview/rag-interview/spring-ai-modular-rag.md): 梳理 Spring AI 基于 Advisor 责任链实现模块化 RAG 的机制，详解预检索改写、向量召回与后检索重排三阶段分工与企业级避坑点。
+- [什么是向量数据库？大模型开发中它主要解决什么问题？](/interview/rag-interview/vector-database.md): 解析向量数据库的核心定义、暴力搜索的硬件带宽瓶颈、IVF-PQ 与 HNSW 索引原理、工程权衡及元数据过滤陷阱。
+- [RAG 中如何实现向量数据库的增量更新？](/interview/rag-interview/vector-db-incremental.md): 梳理 RAG 向量库增量同步机制，涵盖双层哈希比对、Delete-Insert 两阶段更新、级联清理、段合并开销与 CDC 最终一致性架构。
+- [专用向量数据库与 PostgreSQL (pgvector) 有什么区别？RAG 场景该如何选型？](/interview/rag-interview/vector-db-vs-traditional.md): 对比专用向量数据库与 PostgreSQL (pgvector) 在存储结构、性能表现、事务一致性与运维成本上的差异，给出清晰的工程选型边界。
+- [如何在 LangChain 中实现 RAG 应用？](/interview/rag-interview/what-is-rag-langchain.md): 系统讲解 RAG 的定义与原理，结合企业知识库案例剖析 LangChain 离线索引与在线生成的组件拆解、LCEL 数据流转、数据类型对齐与生产陷阱。
+- [RAG 是什么？工作原理、业务价值与适用边界](/interview/rag-interview/what-is-rag.md): 系统讲解检索增强生成（RAG）的技术定义、三要素架构、业务痛点与技术边界，对比参数化与非参数化记忆，提供面试口述与工程权衡建议。
 
-## 核心主题
+## AI 应用如何稳定落地生产？工程架构核心设计
+- [AI 应用如何稳定落地生产？工程架构核心设计](/architecture/): 从单体脚本走向生产级系统，全面解析网关治理、分级调度、状态机检查点持久化与评测闭环的工程架构设计。
+- [大模型应用怎么做自动化评测？从核心指标到CI/CD门禁](/architecture/ai-evaluation.md): 介绍大模型应用评测体系的搭建方法，涵盖评测集构建、LLM-as-a-Judge裁判偏差校准、忠实度与召回率等关键指标计算，以及CI/CD分层门禁与线上回流实践。
+- [大模型应用系统架构设计：从单次调用到生产级系统](/architecture/ai-system-design.md): 解析大模型应用系统的四层分层架构、三路数据与控制流、三级状态管理分治，以及应对模型推理挂起的全链路超时与降级工程实践。
+- [大模型耗时请求如何做高并发？异步任务与排队系统设计](/architecture/async-tasks.md): 大模型推理耗时长，同步调用极易耗尽网关连接池导致雪崩。本文讲解任务提交、队列解耦、双维度令牌桶背压、状态机租约与结果投递的工程落地方案。
+- [大模型上下文如何管理？窗口预算、动态截断与缓存优化](/architecture/context-management.md): 详解大模型上下文窗口的配额计算、会话压缩、RAG动态知识装填与KV Cache前缀对齐工程实践。
+- [外部模型服务中断时，大模型系统如何做容灾转移与多级降级？](/architecture/high-availability.md): 解析外部大模型在容量不足、网络挂起和配额耗尽时的故障转移拓扑、主动健康探测状态机、多级降级阶梯及合规边界。
+- [大模型系统如何做日志与分布式链路追踪？端到端可观测性实践](/architecture/logging-trace.md): 基于OpenTelemetry解析大模型系统链路追踪，涵盖W3C上下文传播、流式TTFT与ITL指标、双轨日志脱敏及排障下钻。
+- [长任务如何可靠执行？检查点、幂等重试与人机协同](/architecture/long-task-execution.md): 解析长周期 Agent 任务的状态管理机制，涵盖图状态机建模、检查点快照存储、基于幂等键的写操作隔离、人工挂起恢复与分布式租约回收。
+- [什么是模型网关？如何统一管理多供应商接口、凭证与流量？](/architecture/model-gateway.md): 探讨模型网关的核心职责与实现架构，涵盖统一API协议适配、API Key凭证池管理、RPM/TPM双维度预占限流、断路器熔断与TTFT/TPOT可观测指标。
+- [如何设计多模型路由：动态分流与降级策略](/architecture/multi-model-routing.md): 解析多模型路由系统的决策维度、亚 20ms 路由器实现、级联降级树拓扑、防雪崩流量整形与动态配额分流机制。
+- [大模型应用如何做多租户数据隔离与权限控制？](/architecture/security-permission.md): 面向多租户生产场景，梳理检索前过滤、PostgreSQL行级安全、提示词结构化包裹、动态工具鉴权与gVisor执行沙箱的具体实现与验收指标。
+- [大模型流式响应怎么做？从协议选型、代理缓冲到级联取消](/architecture/streaming.md): 解析大模型流式响应的端到端实现：对比 SSE 与 WebSocket、排查 Nginx 缓冲延迟、实现前后端级联取消以避免算力浪费，以及解析工具调用的混合数据流。
+- [Token 成本如何控制？从多级缓存到配额与批处理架构](/architecture/token-cost.md): 剖析大模型调用费用暴涨的根本成因，通过精确与语义双层缓存、两阶段配额锁死及离线批处理构建低成本高防线的工程架构。
 
-AI 学习、人工智能教程、机器学习、深度学习、Transformer、大语言模型、LLM、Token、Embedding、提示词工程、RAG、向量数据库、Agent、MCP、GraphRAG、模型微调、模型推理、模型评估、AI 系统设计、AI 编程、AI 面试题。
+## AI 项目实战：从单次调用到多步骤工作流的落地路径
+- [AI 项目实战：从单次调用到多步骤工作流的落地路径](/projects/): 整理 13 个实战项目的演进关系，讲解从单次 Prompt 调用、RAG 检索、状态图工作流到带执行反馈 Agent 的技术选型与验收指标。
+- [构建代码生成与调试助手：仓库上下文组装、补丁生成与测试验证](/projects/ai-coding-assistant.md): 介绍终端代码助手的设计与实现，涵盖文件树与 AST 骨架提取、Unified Diff 容错应用、测试沙箱隔离及多轮自动纠错循环。
+- [如何用 Python 构建单文件文档问答系统？轻量 RAG 最小可运行闭环](/projects/ai-doc-qa.md): 从文档解析、滑动分块、内存向量检索到带约束 Prompt 生成，用 Python 构建单文件文档问答系统的最小运行闭环与验收测试。
+- [AI 模拟面试助手：状态机流转、动态追问与多维评估实战](/projects/ai-interview-assistant.md): 基于有限状态机编排多轮面试交互，解决自由对话跑偏与追问失控；结合双层上下文压缩与结构化考查记录，实现从出题、深挖到多维打分的完整闭环。
+- [如何搭建多文档知识库？混合检索、分块与权限隔离实战](/projects/ai-knowledge-base.md): 以内部运维故障库为贯穿案例，详解结构感知分块、密集与BM25混合检索、RRF融合排序、精排以及前置权限过滤的落地实现与评测。
+- [AI 论文阅读助手：版面解析、跨章节检索与原文高亮实战](/projects/ai-paper-reader.md): 针对学术论文双栏排版、LaTeX公式与跨章节论述，讲解从版面分析、章节树元数据索引到跨章节检索与像素级原文高亮的实现闭环。
+- [AI 简历优化助手：结构化提取、JD 匹配与事实保真改写实战](/projects/ai-resume-assistant.md): 基于 Python 与 Pydantic 构建简历优化流水线，涵盖分栏解析、技能归一化、双轨打分、STAR 改写与事实拦截。
+- [如何构建实时 AI 搜索引擎：从查询重写到来源归因](/projects/ai-search-engine.md): 介绍实时 AI 搜索引擎的端到端实现：包含多轮查询重写、异步网络抓取、网页正文清洗、上下文预算裁剪与内联引用校验，附代码与验收方案。
+- [AI视频脚本生成器：如何用结构化输出保证分镜与时长准确？](/projects/ai-video-script.md): 通过 Pydantic 建模、Tool Calling 与语速节奏校验，解决短视频分镜脚本格式漂移与声画脱节问题，实现自动化导出分镜表与口播时间轴。
+- [如何用 LangGraph 编排确定性业务逻辑与大模型任务？](/projects/ai-workflow-automation.md): 以工单退款系统为例，使用 LangGraph 混合手写规则与大模型节点，实现状态持久化、条件路由与人工审批介入。
+- [如何用大模型写长文？分层规划、章节扩写与状态一致性实战](/projects/ai-writing-assistant.md): 拆解长文写作的多阶段流水线：分层大纲拆解、Token预算分配、上下文切片扩写、后置规则审查与断点恢复实战。
+- [大模型服务如何上线：FastAPI 网关、SSE 流式通信与监控追踪](/projects/project-deployment.md): 讲解大模型应用从本地脚本到在线服务的生产封装，涵盖 FastAPI 异步网关、SSE 流式通信、令牌桶限流、长任务异步解耦与全链路监控。
+- [如何实现带混合检索与降级容灾的 RAG 后端？PrepRAG 完整代码实战](/projects/rag-implementation.md): 从文档解析入库、Qdrant多路召回到Cross-Encoder重排与超时降级，交付一套生产可用的流式RAG完整实现。
+- [PrepRAG面试问题复盘：如何设计分块、重排、混合检索与离线评测？](/projects/rag-interview-qa.md): 围绕垂直领域问答系统PrepRAG，系统复盘长代码切分、重排延迟权衡、双路召回RRF融合、事实冲突处理与Ragas离线评测的核心技术追问及现场编码实现。
+- [如何设计面向技术面试的知识库问答系统？PrepRAG 架构与业务设计](/projects/rag-project-experience.md): 解析面向技术面试的知识库问答系统 PrepRAG 的架构分层、混合检索与父子分块模型，给出了端到端流程与验收指标。
+
+## AI 技术资源如何分类与选型？
+- [AI 技术资源如何分类与选型？](/resources/): 以客服知识库助手为例，按理论输入、模型计算、框架组件与协议工具四层梳理 AI 资源，给出商业 API 与自建部署、专用向量库与扩展插件的选型权衡与验证清单。
+- [Agent 框架选型：从自建循环到状态机运行时](/resources/agent-framework.md): 解析 Agent 框架的调度机制与适用场景，对比自建 ReAct 循环、LangGraph 状态机与多智能体框架的权衡，提供选型指南与生产防护策略。
+- [AI 编程工具如何选型？编辑器插件、原生 IDE 与终端 Agent 的工作机制与差异](/resources/ai-coding-tools.md): 对比编辑器插件、原生 AI IDE 与终端 Agent 三种形态的工作机制、上下文索引用法与团队合规边界，提供清晰的选型标准与官方入口。
+- [大模型底层开源项目怎么选？从计算框架、分布式训练到推理引擎全景指南](/resources/ai-opensource.md): 梳理大模型基础设施核心开源项目，涵盖计算框架、分布式并行库、推理引擎与算子优化，提供官方入口与工程选型标准。
+- [通用 AI 工具选型指南：搜索、文档研读、多模态与工作流自动化](/resources/ai-tools.md): 系统梳理搜索增强、长文档解析、视觉音频生成与工作流自动化工具的工作机制、适用场景、技术边界与企业选型标准。
+- [商业模型 API 怎么选与怎么接？推理机制、协议网关与高可用实践](/resources/api-platform.md): 系统梳理商业大模型 API 的通信协议、Token 计费、首字延迟构成、约束解码与上下文缓存，并提供多厂商容灾网关设计。
+- [MCP Server 是什么？如何选型与调试官方参考实现](/resources/mcp-server.md): 解析 MCP 架构中 Host、Client 与 Server 的协作分工，对比 stdio 与 Streamable HTTP，提供开源选型建议与调试指南。
+- [开源大模型去哪下载？模型平台与权重格式选型指南](/resources/model-platform.md): 详解 Hugging Face 与 ModelScope 的架构差异、模型卡合规排查、SafeTensors 与 GGUF 格式安全性，以及内网镜像同步流水线。
+- [大模型核心论文怎么选怎么读？关键文献脉络与工程核验指南](/resources/papers.md): 梳理大模型代表性论文脉络与获取渠道，详解架构演进、对齐微调与推理加速原理，提供识别论文实验边界与工程核验的实操方法。
+- [RAG 框架与组件选型指南：文档解析、混合检索到评估落地](/resources/rag-framework.md): 系统梳理 RAG 架构中编排框架、文档解析器、混合检索算法与评估套件的选型标准与工程取舍。
+- [大模型开发者该读哪些经典技术书？如何按领域建立理论体系？](/resources/tech-books.md): 按数学、机器学习、NLP与分布式系统四个领域梳理经典教材与官方入口，通过数值实验解释理论对模型调优与工程落地的支撑作用。
+- [向量数据库如何工作？索引算法、混合检索与技术选型指南](/resources/vector-db.md): 从向量检索算法、标量过滤陷阱到混合检索与多租户方案，解析向量数据库工作机制与选型权衡。
+
+## 关于本站：安逸Ai学习站的内容架构与使用指南
+- [关于本站：安逸Ai学习站的内容架构与使用指南](/about/): 介绍安逸Ai学习站的建设初衷、内容分层设计、工程编写规范、站务导航及推荐学习路径。
+- [作者介绍](/about/author-intro.md): 安逸Ai文档站作者的学术背景、技术经历、项目实践与联系方式介绍。
+- [贡献指南与勘误反馈](/about/contributing-guide.md): 安逸Ai 文档站的内容勘误、链接修正与文档改进指引。
+- [常见问题](/about/faq.md): 整理安逸Ai学习站关于内容定位、阅读建议、代码资源、PDF资料领取与交流反馈的常见问题解答。
+- [交流与关注](/about/join-community.md): 安逸Ai学习站的真实交流与反馈渠道说明，包含微信公众号留言、GitHub 仓库反馈与 B 站动态等有效联系方式。
+- [学习资料 PDF 获取与阅读指南](/about/pdf-download.md): 安逸Ai站内核心文章的离线 PDF 整理版领取方式与阅读说明，包含 AI 基础、面试题、大模型 100 讲及前沿专题四个方向。
+- [资料包与学习导读](/about/resource-pack.md): 安逸Ai学习站四类PDF学习资料的内容范围、对应栏目、学习搭配建议与公众号获取方式。
+- [更新日志](/about/update-history.md): 记录安逸Ai文档站从立项规划、多Agent辅助生成实践到各专题板块上线的演进历程与版本变动。
