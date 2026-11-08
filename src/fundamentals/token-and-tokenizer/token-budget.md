@@ -1,163 +1,296 @@
 ---
-title: 上下文长度、Token 预算和接口费用到底怎么算？
+title: 上下文长度、Token 预算与 API 计费到底怎么算？
 icon: mdi:calculator-variant-outline
 tag:
-  - Token与分词
-  - 上下文长度
-  - 费用计算
+- Token与分词
+- 上下文长度
+- 费用计算
+description: 系统拆解大模型上下文窗口的物理边界、Prefill与Decode非对称计费机理，并提供对话截断算法与预算预检方案。
 ---
 
-![](/images/token-and-tokenizer/token-budget_cover.png)
+在调用大语言模型构建应用时，开发者经常会遇到两类典型问题：一是程序抛出 `400 Bad Request: context_length_exceeded`，或者模型输出在句子中途突兀中断，返回 `finish_reason: "length"`；二是月末账单上的费用往往超出最初按“字符数乘单价”估算出的数值。
 
-# 上下文长度、Token 预算和接口费用到底怎么算？
+理解这些现象，需要理清大语言模型运行时的物理约束：**模型始终在严格的离散 Token 预算下执行前向推断**。上下文窗口限定了模型单次处理与生成的最大 Token 总数，决定了请求是否合法；同时在典型服务场景下，硬件处理输入（Prompt）与输出（Completion）时的并发吞吐和资源开销特点不同，也是供应商制定非对称计费策略的重要参考依据。
 
-上篇我们聊了中英文 Token 数量为什么不一样——同样的意思，中文要比英文多用不少"颗粒"。但光知道这个还不够。
+本文从上下文窗口的底层约束出发，拆解模型计费公式，建立可落地的上下文配额划分策略，并提供基于离散 Token 计数的成对截断算法与前置校验规范。
 
-问题是：这些颗粒怎么变成账单上的数字？你每个月付的 AI 费用，到底是怎么算出来的？
+![上下文预算管理与费用测算全景图，展示窗口硬约束、动态配额与计费链路](/images/content-rebuild/2ccb784431ae5a5c/cover.png)
+*图 1：大模型上下文预算由系统指令、多轮历史、检索证据与生成缓冲共同组成，受底层最大位置编码刚性约束，并由输入输出非对称计费模型计量。*
 
-今天把这事彻底讲清楚。
+---
 
-## Token 是什么？模型是这样"吃"文字的
+## 上下文窗口的物理约束：Prompt 与 Completion 的总和边界
 
-先说个基本概念，免得你听到"按 Token 计费"就一脸懵。
+大语言模型的上下文窗口（Context Window），是指模型在单次自回归前向计算中能够支持的最大序列长度 $L_{max}$。这里的基本计量单位是分词后的离散 Token，而不是自然语言的字符或汉字。
 
-Token 不是字，也不是词。它是大模型处理文本的最小单位。模型不是一个个读汉字的，而是一块块"吞"的。
+### 为什么上下文长度存在硬性上限？
 
-英文怎么切？通常一个单词算 1-2 个 Token。比如 "Hello" 是一个，"World" 也是一个。但如果是 "running"，模型可能切成 "run" + "ning"，变成两个。
+上下文长度不是云服务商随意设定的业务额度，而是由模型结构与硬件物理特性共同决定的：
+1. **位置编码（Positional Encoding）**：无论是早期的绝对位置编码，还是主流的 RoPE（旋转位置编码），在预训练时都会设定一个基准上下文长度。虽然可以通过位置插值、YaRN 等外推方法扩展，但任意一个部署完毕的模型服务实例，其单次推理能够分配的最大位置索引范围是确定的。
+2. **显存与 KV Cache（键值缓存）**：在标准自注意力计算中，序列长度为 $L$ 时，Attention 矩阵的基础显存与计算开销对应 $O(L^2)$ 复杂度。在逐字自回归解码阶段，系统必须在显存中常驻每一层、每个注意力头的 Key 和 Value 张量（KV Cache）。硬件显存容量决定了并发服务下能够容纳的最大 Token 总长度。
 
-中文呢？更费颗粒。一个汉字大约等于 1.5-2.5 个 Token。你说四个字 "今天天气好"，可能就被切成七八个颗粒了。
+### 核心约束等式与请求校验
 
-同等语义的内容，中文消耗的 Token 比英文多 50% 到 100%。这就是为什么同样的对话，中文用户往往比英文用户付更多钱。
+在单次推理会话中，请求必须满足以下基本不等式：
 
-我之前用英文和中文分别让 Claude 写同一封商务邮件，中文版本的价格大概贵了 60% 左右。一开始我还以为是汇率问题，后来才搞明白是 Token 消耗的差异。
+$$L_{prompt} + L_{completion} \le L_{max}$$
 
-所以下次觉得 AI 账单贵，先看看自己说的是不是中文。
+其中：
+* $L_{prompt}$ 是送入模型的输入 Token 总数，包含 System Prompt、开发者提示词、RAG 检索证据、历史对话上下文以及当前轮次的用户提问。
+* $L_{completion}$ 是模型在自回归解码中实际生成的输出 Token 总数。
+* $L_{max}$ 是模型实例支持的物理上限（如 4,096、8,192、32,768 或 128k）。
 
-![Token计量对比图，展示"Hello World"和"你好世界"的Token分割方式](/images/token-and-tokenizer/20260606_235823_708864_01.png)
+在发起 API 请求时，开发者通常会传递 `max_tokens` 参数（部分 SDK 命名为 `max_completion_tokens`），用来限制模型生成的**最大输出 Token 上限**。
+
+![上下文窗口的物理硬约束结构图，展示输入序列与输出预留占满最大位置编码](/images/content-rebuild/2ccb784431ae5a5c/fig-1.png)
+*图 2：总上下文标尺被 Prompt 与预留输出共同占用。当两者的请求总和超出模型支持的物理最大位置编码上限时，推理请求将被底层立即阻断。*
+
+这就带来了开发中最常见的报错：
+
+> **场景推演**：若一个模型的物理上限 $L_{max} = 4,096$，当前 Prompt 经分词后实际消耗 3,500 Token，开发者在请求体中设置 `max_tokens = 1,000`，发起调用时会发生什么？
+
+在主流 API 规范下，**该请求在进入解码阶段前就会被网关拒绝**。API 网关会检查输入与预留空间的总和：$L_{prompt} + \text{max\_tokens} = 3,500 + 1,000 = 4,500 > 4,096$。由于网关无法保证在不突破上下文上限的前提下满足用户对 1,000 Token 输出容量的承诺，服务端会返回 HTTP 400 错误：
+
+```json
+{
+  "error": {
+    "message": "This model's maximum context length is 4096 tokens. However, you requested 4500 tokens (3500 in the messages, 1000 in the completion). Please reduce the length of the messages or completion!",
+    "type": "invalid_request_error",
+    "code": "context_length_exceeded"
+  }
+}
+```
+
+若部分宽容网关自动将 `max_tokens` 收缩至剩余可支配空间（$4,096 - 3,500 = 596$ Token），只要模型在生成第 596 个 Token 时仍未输出自然结束符（如 `<|endoftext|>` 或 `<|im_end|>`），生成过程就会被强行终止，返回 `finish_reason = "length"`，造成输出内容被阶段性截断。
+
+关于 Token 的离散本质与切分原理，可参考基础教材 [/fundamentals/token-and-tokenizer/what-is-token.md](/fundamentals/token-and-tokenizer/what-is-token.md)。
+
+---
+
+## API 计费规则：输入输出不对称与多轮累加
+
+大模型 API 通常按照 Token 数量计费（如“每 100 万 Token（1M Tokens）”或“每 1,000 Token（1k Tokens）”）。单次调用的总费用公式如下：
+
+$$\text{Cost}_{total} = L_{input} \times P_{input} + L_{output} \times P_{output}$$
+
+其中 $P_{input}$ 为输入单价，$P_{output}$ 为输出单价。
+
+### 为什么商业 API 的输出单价通常显著高于输入单价？
+
+API 的具体定价标准由各云服务商公布，但在主流供应商的价目表中，输出 Token 单价通常是输入单价的数倍。这种定价差异与大模型服务在两个阶段的典型硬件吞吐特征密切相关：
+
+1. **Prefill（预填充）阶段处理输入**：输入 Prompt 是一次性送入模型的，在大块矩阵运算下，GPU 更容易利用张量核心（Tensor Cores）进行并发计算。在常见服务场景下，该阶段通常更接近**算力受限（Compute-Bound）**，吞吐效率相对较高，摊薄了单个输入 Token 的设备时间。
+2. **Decode（解码）阶段处理输出**：大模型生成输出采用逐步自回归机制。每生成 1 个新 Token，模型就需要执行一轮前向计算，并在常规批大小下将此前所有 Token 的 KV Cache 从显存（HBM）读入片上高速缓存（SRAM）。由于单步算术计算强度（FLOPs/Byte）较低，硬件往往处于**显存带宽受限（Memory Bandwidth-Bound）**状态，整体生成吞吐远低于预填充阶段，单 Token 占用的硬件服务时间与资源开销明显更高。
+
+![Prefill阶段与Decode阶段的计算特征对比图，解释API输入与输出定价不对称原因](/images/content-rebuild/2ccb784431ae5a5c/fig-2.png)
+*图 3：Prefill 阶段利用矩阵并发吞吐处理全部输入，Decode 阶段受制于自回归逐字读写 KV Cache 的显存带宽瓶颈，使得输出阶段的单 Token 耗时通常更高，成为服务商制定非对称定价的重要成本动因。*
+
+### 多轮对话的 Token 二次方增长
+
+在无状态的 HTTP API 接口下，模型服务端不会替客户端长期保存会话上下文。为了维持多轮对话的连贯性，**每一次交互都必须将此前所有的历史对话重新打包发送给 API**。
+
+假设施加的系统提示词为 $S$ 个 Token，用户每轮提问均为 $U$ 个 Token，模型每轮回答均为 $A$ 个 Token：
+
+* **第 1 轮**：输入 $S + U$，输出 $A$
+* **第 2 轮**：输入 $S + U + A + U$，输出 $A$
+* **第 3 轮**：输入 $S + 2(U + A) + U$，输出 $A$
+* **第 $k$ 轮**：输入 $L_{input}(k) = S + k \cdot U + (k - 1) \cdot A$
+
+如果连续进行 $N$ 轮对话，累计送入的**总输入 Token 量**为等差数列求和：
+
+$$\sum_{k=1}^{N} L_{input}(k) = N \cdot S + U \cdot \frac{N(N + 1)}{2} + A \cdot \frac{N(N - 1)}{2}$$
+
+输入 Token 总量与轮数 $N$ 呈现**二次方关系（$O(N^2)$）**。在多轮对话中，即使单次提问并不长，反复重传的历史记录也会在数轮之后占据输入消耗的绝大部分，大幅推高计费成本。
+
 <ReadMoreLock />
 
-## 上下文长度——模型的"胃容量"有多大
+---
 
-搞懂 Token 之后，你可能还有疑问：模型能处理多长的对话？
+## 动态上下文预算分配：配额划分与安全预留
 
-这个限制叫"上下文长度"。你可以理解成模型一顿饭能吃多少东西。
+为了防止运行时上下文溢出并确保输出完整，系统在拼装请求内容时需要对上下文窗口进行分层规划：
 
-128K 上下文是什么概念？大约能放 16 万汉字。你写一篇中篇小说塞进去，模型都能一口气读完。Gemini 1M 的上下文呢？125 万 Token，将近 150 万汉字，够塞进去好几本书了。
+$$
+L_{max} \ge L_{fixed} + L_{reserved} + L_{dynamic} + L_{elastic}
+$$
 
-但问题来了：输入加输出都算在上下文里。
+各组成部分的作用与淘汰优先级划分如下：
 
-你发了 1000 个 Token 的 Prompt，模型回了 500 个 Token，这就算用了 1500 个 Token。如果对话历史很长，每次请求都要把之前的内容再传一遍——这些历史 Token 全都要计费。
+| 配额区间 | 构成内容 | 调整优先级 | 策略说明 |
+| :--- | :--- | :--- | :--- |
+| **固定区间 ($L_{fixed}$)** | System Prompt、模型角色设定、核心约束与输出格式说明 | 最高 | **严格保留**。编写时需精简表述，剔除冗余修饰词。 |
+| **工具声明区 ($L_{tools}$)** | Function/Tool Schema 描述（JSON 格式参数定义） | 高 | **按需挂载**。根据当前任务路由仅载入对应工具，避免全量堆叠。 |
+| **安全生成区 ($L_{reserved}$)** | 为模型生成预留的缓冲空间（即 `max_tokens` 参数） | 高 | **硬性预留**。预留不足会造成半句截断（`length`），预留过大会挤压输入空间。 |
+| **当前输入区 ($L_{dynamic}$)** | 当前轮次用户的直接提问、上传的即时日志或文本 | 中 | **前置校验**。若当前单次输入自身超出可用上限，在网关层予以拦截并提示用户。 |
+| **弹性区间 ($L_{elastic}$)** | RAG 检索召回的文档切片、多轮历史对话记录 | 低 | **动态淘汰**。空间不足时，按相关性淘汰 RAG 切片，按轮次滑动淘汰旧对话。 |
 
-对话越久，费用越高。而且一旦超过上下文上限，你就得截断或者开新对话，之前的上下文全丢了。
+![上下文预算动态分配堆叠图，展示固定配额、弹性配额与保底生成的层级](/images/content-rebuild/2ccb784431ae5a5c/fig-3.png)
+*图 4：垂直层级结构明确划分了预算分配优先级，核心指令与输出缓冲享有刚性保障，中间的多轮历史与外部检索证据在空间吃紧时执行弹性淘汰。*
 
-这就像自助餐的用餐时间限制。在这个时间内你能吃多少都行，但时间一到，对不起，下一顿重新开始。
+### 预算分配具体算例
 
-我之前用 Kimi 处理一份长报告，跑到第8轮对话的时候突然发现模型"失忆"了——之前讨论的内容全忘了。后来才搞明白是上下文长度超限了，不得不重新开始。
+以物理窗口 $L_{max} = 8,192$ 的模型构建工单助手为例：
+1. **安全生成预留 ($L_{reserved}$)**：根据预期业务输出长度，设定 `max_tokens = 1,024`。此时输入总预算上限被锁定为 $8,192 - 1,024 = 7,168$ Token。
+2. **核心指令与工具 ($L_{fixed} + L_{tools}$)**：经精确分词，System Prompt 占用 420 Token，工具描述 Schema 占用 580 Token，合计固定占用 1,000 Token。
+3. **剩余可用输入配额**：$7,168 - 1,000 = 6,168$ Token。
+4. **当前用户提问 ($L_{dynamic}$)**：用户本轮发送了一段工单文本，分词计数为 1,168 Token。
+5. **弹性预算空间 ($L_{elastic}$)**：留给“RAG 检索切片”与“多轮历史”的总额为 $6,168 - 1,168 = 5,000$ Token。
 
-![主流模型上下文长度对比柱状图，展示Claude 1M、Gemini 1M、Kimi 256K等数据](/images/token-and-tokenizer/20260606_235828_175424_01.png)
+若本轮检索召回了 4 篇相关文档共消耗 3,200 Token，则留给多轮对话历史的空间仅剩 $5,000 - 3,200 = 1,800$ Token。此时裁剪程序必须运行，将历史消息压缩在 1,800 Token 以内。
 
-## 费用怎么算？输入和输出不是一个价
+关于全局 Token 成本控制体系，可参考进阶架构篇 [/architecture/token-cost.md](/architecture/token-cost.md)；对于代理循环调用导致 Token 异常激增的防御，请参考专题分析 [/frontier/loop-engineering/Loop_Engineering_的坑_无限循环_烧_Token_越改越差.md](/frontier/loop-engineering/Loop_Engineering_的坑_无限循环_烧_Token_越改越差.md)。
 
-终于到正题了：钱到底怎么算？
+---
 
-有个公式你得记住：
+## 历史上下文截断算法：为什么字符数估算法不可靠？
 
-**费用 = 输入 Token 数 × 输入单价 + 输出 Token 数 × 输出单价**
+在编写上下文管理逻辑时，常见的简易做法是按字符数粗略折算（例如假设“英文 4 字符折算 1 Token，中文 1 汉字折算 1 Token”）。在生产代码中，**直接依据字符数截断容易引发意料之外的溢出或截断过度**。
 
-但这里有个坑：输入和输出的价格不一样。
+### 字符估算的失效机理
 
-大多数模型，输出价格是输入的 3 到 5 倍。为什么？因为生成内容比读内容更费算力。模型要一个字一个字地"想"出来，比直接读要慢得多。
+分词器（Tokenizer）采用基于统计数据的子词切分算法（如 BPE、WordPiece、Unigram，可查阅 [Hugging Face tokenizers 官方文档](https://huggingface.co/docs/transformers/tokenizer_summary)）。文本类型不同，字符到 Token 的折算比差异极大：
 
-举个好理解的例子。视频通话怎么收费？你的说话费乘以你说的时间，加上对方的说话费乘以对方说的时间。
+1. **生僻字与多字节 UTF-8 编码**：常用汉字通常在词表中占 1 个独立 Token，而低频字或专业术语在字节级 BPE（Byte-level BPE）中会被拆分为 2 到 3 个字节 Token。关于中文分词的详细机制，可阅读 [/fundamentals/token-and-tokenizer/chinese-tokenization.md](/fundamentals/token-and-tokenizer/chinese-tokenization.md)。
+2. **代码缩进与空白符**：连续空格、制表符（`	`）、换行符（`
+`）在不同分词器中的合并规则不一，有时单个空白字符就是一个 Token，导致 Token 数量明显多于常规文本。
+3. **标点与特殊符号**：JSON 结构中的引号、括号、转义符号以及 Emoji 可能会显著增加切分后的 Token 数量。
 
-AI 对话同理。你输入一段 Prompt 算一次费，模型输出的每个字也要算钱。
+若按字符长度估算，在遇到分词膨胀率高的样本时，真实 Token 数量很容易突破安全裕度，导致 API 报错；而在膨胀率低的纯英文样本中，又会过早裁剪，丢弃原本可以容纳的上下文。
 
-更扎心的是：多轮对话会越来越贵。
+![字符估算法与离散Token分词截断算法对比示意图，展示字符计数失效案例](/images/content-rebuild/2ccb784431ae5a5c/fig-4.png)
+*图 5：字符估算策略无法感知离散子词的真实切分规则，易在生僻字、排版缩进和特殊代码中引发意外溢出；离散 Token 裁剪能确保物理边界严格收敛。*
 
-每次对话都要带上之前的聊天记录。聊 10 轮之后，你发的请求可能包含了几千个历史 Token。这些 Token 全都要付费。
+### 基于成对逻辑的历史截断实现
 
-我上个月接了个项目，用 GPT-4 做对话式编程助手。项目做完了才发现，光是测试调试阶段的对话费用就花了快 200 块——那些反复的历史记录真是烧钱大户。
+在标准的 Chat 接口中，消息以 `{"role": "user", ...}` 和 `{"role": "assistant", ...}` 的形式交互组织。编写截断逻辑时需遵守两项原则：
+* **保留 System Prompt**：索引为 0 的系统设定始终保留。
+* **成对淘汰（User + Assistant）**：不宜只保留 Assistant 回答而裁掉对应的 User 提问，否则上下文将缺乏语义前提；裁剪应从最早的完整问答对开始向前淘汰。
 
-所以长对话的账单增长不是线性的，是指数级的。
+以下是基于离散 Token 计数的截断参考实现：
 
-![API计费机制流程图，展示输入→处理→输出三阶段及对应计费](/images/token-and-tokenizer/20260606_235819_302592_01.png)
+```python
+from typing import List, Dict
+import tiktoken
 
-## 长上下文的"隐藏费用"
+def truncate_chat_history(
+    messages: List[Dict[str, str]],
+    max_history_tokens: int,
+    model_name: str = "gpt-4o"
+) -> List[Dict[str, str]]:
+    """
+    按照离散 Token 预算裁剪多轮对话历史。
+    保留开头的 System Prompt，按 (User, Assistant) 成对从旧到新依次淘汰。
+    """
+    try:
+        encoding = tiktoken.encoding_for_model(model_name)
+    except KeyError:
+        encoding = tiktoken.get_encoding("cl100k_base")
 
-你以为买了个 128K 上下文的模型就万事大吉了？未必。
+    # 统计单条消息的精确 Token 消耗（包含角色标记与边界协议开销）
+    def count_message_tokens(msg: Dict[str, str]) -> int:
+        # 每条结构化消息通常包含 3-4 个协议控制 Token
+        return len(encoding.encode(msg["content"])) + 4
 
-有些模型会玩"超量加价"这一套。
+    if not messages:
+        return []
 
-比如某个模型，你用超过 272K Token 之后，输入价格直接翻倍。超过 1M？输出价格乘以 1.5。这就好比出租车的里程费，过了某个临界点，单价直接跳档。
+    system_message = None
+    dialogue_messages = []
 
-但也有良心的。Claude 从 2026 年开始全窗口统一价，不管你用多少都是一个价。这种策略对需要处理长文本的用户就友好多了。
+    # 提取不可淘汰的 System Message
+    if messages[0]["role"] == "system":
+        system_message = messages[0]
+        dialogue_messages = messages[1:]
+    else:
+        dialogue_messages = messages
 
-所以选模型的时候，别光看基础价格。超过某个长度之后怎么收费，这个才是关键。
+    system_tokens = count_message_tokens(system_message) if system_message else 0
+    if system_tokens > max_history_tokens:
+        raise ValueError("System Prompt 自身 Token 消耗已超出分配的历史总预算")
 
-有时候便宜 30% 的模型，因为超量加价，用起来反而更贵。
+    available_tokens = max_history_tokens - system_tokens
+    
+    preserved_messages: List[Dict[str, str]] = []
+    accumulated_tokens = 0
 
-选型之前，把各家的超长上下文定价表拿出来对比一下。这钱花得值不值，细节里全是门道。
+    # 从最新消息向前逆序扫描，优先保留最近的对话
+    i = len(dialogue_messages) - 1
+    while i >= 0:
+        current_turn_tokens = 0
+        turn_pair = []
 
-![长上下文加价对比表，展示不同厂商的阈值和加价倍数](/images/token-and-tokenizer/20260606_235841_295808_01.png)
+        # 识别成对的 (User, Assistant) 交互
+        if i > 0 and dialogue_messages[i]["role"] == "assistant" and dialogue_messages[i-1]["role"] == "user":
+            turn_pair = [dialogue_messages[i-1], dialogue_messages[i]]
+            current_turn_tokens = count_message_tokens(dialogue_messages[i-1]) + count_message_tokens(dialogue_messages[i])
+            step = 2
+        else:
+            # 单条孤立消息（如开局首个 User 提问）
+            turn_pair = [dialogue_messages[i]]
+            current_turn_tokens = count_message_tokens(dialogue_messages[i])
+            step = 1
 
-## 省钱实战——从 128K 到 1M 的优化策略
+        if accumulated_tokens + current_turn_tokens <= available_tokens:
+            preserved_messages = turn_pair + preserved_messages
+            accumulated_tokens += current_turn_tokens
+            i -= step
+        else:
+            # 预算不足以容纳更早的完整交互，终止回溯
+            break
 
-好了，道理都懂了。接下来聊点实在的：怎么少花钱？
+    # 组装最终结果
+    final_messages = []
+    if system_message:
+        final_messages.append(system_message)
+    final_messages.extend(preserved_messages)
+    
+    return final_messages
+```
 
-**第一招：滑动窗口，别让对话无限膨胀。**
+---
 
-简单说就是保留关键对话，丢弃冗余历史。比如聊了 50 轮之后，把前面的总结成一段话，删掉原始记录。这样每次请求的 Token 数就控制住了。
+## 离线预检流程：避免请求到达远端后报错
 
-我现在做长项目都是这么干的——每隔20轮左右让 AI 总结一下之前的要点，然后开启新一轮对话。省下来的 Token 费用挺可观的。
+在调用大模型 API 前，在应用本地执行离线分词预检，可以有效避免由 `context_length_exceeded` 引发的网络重试与耗时损失。
 
-**第二招：缓存命中，有些 Token 可以打折。**
+### 离线预检流程设计
 
-系统提示词在多轮对话里是重复的。有些 API 服务商会做缓存命中——同样的内容第二次用，价格直接打折扣。Kimi 这类国产模型缓存命中率能做到 90%，省下的钱很可观。
+![离线本地预校验与在线网络调用防护管道流程图](/images/content-rebuild/2ccb784431ae5a5c/fig-5.png)
+*图 6：本地分词预校验作为前置网关，在发起物理请求前拦截超标载荷，执行针对性裁剪或告警，阻断下游无效网络消耗与报错。*
 
-**第三招：Batch API，不着急的任务用批量模式。**
+一个完整的 Token 预检流程通常包含四个步骤：
 
-你要是需要处理一批文档，不用实时返回结果，走 Batch API 价格能打三折到一折。适合数据分析、批量翻译、内容审核这类不赶时间的任务。
+1. **分词器对齐（Tokenizer Alignment）**：必须加载与目标模型一致的分词器。例如调用 OpenAI 模型使用 `tiktoken`，调用开源 Qwen、Llama 系列模型使用 Hugging Face `tokenizers` 或通过 Transformers 库载入对应的 `AutoTokenizer`。关于分词器的实现机理，请参考 [/fundamentals/token-and-tokenizer/how-tokenizer-works.md](/fundamentals/token-and-tokenizer/how-tokenizer-works.md)。
+2. **协议标记补偿（Protocol Overhead）**：Chat 模型在格式化多轮角色时会注入结构化标记（如 `<|im_start|>user
+...<|im_end|>`）。计算输入 Token 时，需为每条消息叠加固定的协议开销（前文代码中设为 $+4$ 偏置），并为末尾引导符留出余量（通常为 $+2$ 到 $+3$）。
+3. **安全裕度（Safety Margin）**：在本地计算得到的 $L_{prompt}$ 基础上，建议预留 16 到 32 个 Token 的安全浮动缓冲 $\Delta$，用于吸收不同 SDK 版本在处理特殊控制符时的微小差异。
+4. **分流与熔断**：
+   * **弹性修剪**：若仅是多轮历史或 RAG 证据超限，调用滑动窗口裁剪算法剔除旧数据；
+   * **前端拦截**：若单次用户输入加上核心 System Prompt 本身就已超过 $L_{max} - L_{reserved}$，应在本地直接拒绝该请求，向用户提示精简输入，不向后端网络发起无效调用。
 
-我之前有个需求，需要让 AI 给 500 篇产品文档打标签。如果用实时 API，光费用就得好几百块。后来换成 Batch 模式，费用降到了原来的两折都不到。
+---
 
-**第四招：模型分层，简单任务别用大炮。**
+## 响应状态判定与指标监控
 
-写封邮件、问个简单问题，用 7B 的小模型完全够用，而且便宜几十倍。只有真正复杂的编程、推理任务，才动用 GPT-5、Claude 3.5 这种大块头。
+即使经过了前置配额管理，在实际生成过程中仍需根据服务端返回的状态元数据进行相应处理。
 
-打个比方：旅游预算怎么分配？背包客住青旅省钱，土豪住五星不心疼。聪明人知道什么时候该省钱、什么时候该享受。
+![模型生成终止原因判定与异常降级状态机图](/images/content-rebuild/2ccb784431ae5a5c/fig-6.png)
+*图 7：推理服务响应后的状态分流机制，通过检测 finish_reason 区分正常自然收敛与越界截断，触发下游补偿流程。*
 
-AI 用钱也是这个道理。
+### 1. `finish_reason` 的含义与处理
 
-![上下文管理策略对比图，展示滑动窗口、自动摘要、RAG等5种方案](/images/token-and-tokenizer/20260606_235850_568064_01.png)
+API 响应体中的 `choices[0].finish_reason` 给出了生成的终止原因：
+* `"stop"`：模型输出了结束符（EOS Token）或自然完成生成，属于正常状态。
+* `"length"`：生成的 Token 总数触碰了 `max_tokens` 上限，或请求总长触及了物理窗口边界 $L_{max}$。此时输出文本不完整。应用检测到此信号时，可选择自动拼接提示词（“请继续”）发起追问，或通知用户缩小单次任务范围。
+* `"tool_calls"` 或 `"function_call"`：模型生成了符合 Schema 的结构化工具调用参数，等待客户端执行外部函数。
 
-## 选型三步法——找到最适合你的模型
+### 2. 核心监控指标
 
-那具体怎么选？
+在服务网关层，可以通过以下量化指标评估上下文使用状况：
+* **Prompt 饱和度（Saturation）**：计算方式为 $\frac{L_{prompt}}{L_{max}}$。若系统在日常使用中饱和度持续高于 80%，表明当前模型的上下文容量偏紧，需要考虑切分任务、改进入库分块策略或选用更长窗口的模型。
+* **截断发生率（Length Finish Rate）**：统计响应中 `finish_reason == "length"` 的调用比例。该值过高通常说明预留的 `max_tokens` 偏小，或者提示词未能有效引导模型输出凝练的答案。
+* **单会话平均消耗（Tokens per Session）**：统计单次完整交互中输入和输出 Token 的实际消耗，用于分析长上下文下的成本分布。
 
-**第一步：明确任务类型。**
+长文本场景下的具体上下文管理方案，可查阅 [/llm-100/app-system/context-budget.md](/llm-100/app-system/context-budget.md)；分词与上下文在工程面试中的高频问题，请参考 [/interview/llm-interview/token-basics.md](/interview/llm-interview/token-basics.md) 与 [/interview/llm-interview/tokenization.md](/interview/llm-interview/tokenization.md)。
 
-是写代码？长对话？还是偶尔问答？不同任务对上下文和模型能力的要求不一样。先想清楚自己要干什么。
-
-**第二步：上评测站验证。**
-
-别光听厂商吹。SWE-Bench 测编程能力，Artificial Analysis 这类平台能对比多家模型的实际表现。跑几个你的真实任务样本，比看广告靠谱多了。
-
-我选模型之前都会先在几个测试任务上跑一遍，看实际效果和费用。有些模型跑分很高，但实际用起来效果一般，这种坑踩过不少。
-
-**第三步：算清楚成本。**
-
-Token 单价乘以你预估的用量。有些模型基础价格贵，但超量不加价；有些模型便宜，但用多了单价飙升。结合自己的使用场景算总账。
-
-买车前先想好要越野还是通勤，再看测评，最后算油费。选 AI 模型也是同样的逻辑。
-
-## Token 和上下文，这些概念会影响什么？
-
-写到这你已经知道了 Token 怎么算、上下文怎么管、费用怎么控。
-
-但这只是基础。
-
-Token 的切分方式、上下文的长度限制，这些会对实际应用产生更深远的影响。你写的 Prompt 要多短才有效？RAG 要不要做分块优化？长文本处理有什么技巧？
-
-这些问题的答案，都跟今天的知识有关。
-
-下篇我们就来聊聊：Tokenization 对 Prompt、RAG 和长文本处理有什么影响？
+关于分词机制对大语言模型逻辑能力产生的深层影响，将在下一篇展开说明：[/fundamentals/token-and-tokenizer/tokenization-impact.md](/fundamentals/token-and-tokenizer/tokenization-impact.md)。

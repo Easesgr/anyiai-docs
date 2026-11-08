@@ -1,46 +1,24 @@
-// Anyi AI semantic palette for VuePress Theme Hope
-$vp-c-bg: (
-  light: #f7f9fc,
-  dark: #0d1117,
-);
-$vp-c-bg-alt: (
-  light: #eef3f9,
-  dark: #111821,
-);
-$vp-c-bg-elv: (
-  light: #ffffff,
-  dark: #151b23,
-);
-$vp-c-text: (
-  light: #182230,
-  dark: #edf2f7,
-);
-$vp-c-border: (
-  light: #dce5f0,
-  dark: #2b3542,
-);
-$vp-c-divider: (
-  light: #e6edf5,
-  dark: #222c38,
-);
-$vp-c-shadow: (
-  light: rgb(31 55 88 / 10%),
-  dark: rgb(0 0 0 / 30%),
-);
+$vp-c-bg: (light: #fbfcfa, dark: #17231e);
+$vp-c-bg-alt: (light: #edf0ee, dark: #1d2e25);
+$vp-c-bg-elv: (light: #ffffff, dark: #23392d);
+$vp-c-text: (light: #17231e, dark: #edf0ee);
+$vp-c-border: (light: #ced7d1, dark: #43594b);
+$vp-c-divider: (light: #dce2dd, dark: #344a3d);
+$vp-c-shadow: (light: rgb(23 35 30 / 8%), dark: rgb(0 0 0 / 24%));
+$vp-c-accent: (light: #147459, dark: #86cbb1);
+$vp-c-accent-bg: (light: #147459, dark: #86cbb1);
+$vp-c-accent-hover: (light: #0e5943, dark: #a7dfc5);
+$vp-c-accent-soft: (light: #e1eee6, dark: #233e30);
 
-$vp-c-accent: (
-  light: #4f7df3,
-  dark: #8baaff,
-);
-$vp-c-accent-bg: (
-  light: #3569e8,
-  dark: #7297ff,
-);
-$vp-c-accent-hover: (
-  light: #295bd1,
-  dark: #a6bfff,
-);
-$vp-c-accent-soft: (
-  light: rgb(79 125 243 / 12%),
-  dark: rgb(139 170 255 / 16%),
-);
+$vp-font: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
+$vp-font-heading: $vp-font;
+$vp-font-mono: "'SFMono-Regular', 'Cascadia Code', Menlo, Monaco, Consolas, monospace";
+$navbar-height: 4rem;
+$navbar-mobile-height: 4rem;
+$sidebar-width: 16.5rem;
+$sidebar-mobile-width: 17rem;
+$content-width: 760px;
+$wide-content-width: 1040px;
+$home-page-width: 1408px;
+$vp-t-color: '0.18s ease';
+$vp-t-transform: '0.24s cubic-bezier(0.16, 1, 0.3, 1)';

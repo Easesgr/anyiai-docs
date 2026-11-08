@@ -1,180 +1,284 @@
 ---
-title: Transformer 是什么？为什么它成为大模型的基础架构？
+title: Transformer 是什么？它是如何工作的？
 icon: mdi:robot-outline
 tag:
-  - 深度学习
-  - Transformer
-  - 大模型基础
+- 深度学习
+- Transformer
+- 大模型基础
+description: 拆解 Transformer 的自注意力、因果掩码、多头机制、位置编码与 Pre-LN 架构，解析并行训练与自回归推理的工作机制。
 ---
 
-![](/images/dl-basics/transformer_cover.png)
+在自然语言处理中，理解词与词之间的关联一直是个核心难题。例如在句子：
 
-# Transformer 是什么？为什么它成为大模型的基础架构？
+> “小动物 没有 穿过 马路，因为 **它** 太 累 了。”
 
-上次我们聊了 Attention 机制——AI 是怎么学会"看重点"的。但你有没有想过，这种注意力机制到底是怎么落地的？光有关注能力还不够，模型还需要一套高效的"身体"来执行这些操作。这套"身体"，就是 Transformer。
+人类能一眼看出代词“它”指的是“小动物”，而不是“马路”。但对计算机来说，要建立这种远距离关联并不容易。
 
-2017 年，Google 的几位研究员发表了一篇论文，标题叫《Attention Is All You Need》。翻译过来就是："注意力就是你需要的一切"。听起来很狂，对吧？但事实证明，这帮人还真没吹牛。这篇论文提出的 Transformer 架构，彻底改变了 AI 的发展方向。
+2017 年，Google 团队在论文《Attention Is All You Need》（[Vaswani et al., 2017](https://arxiv.org/html/1706.03762)）中提出了 **Transformer** 架构。它彻底抛弃了以往循环神经网络（RNN）沿时间步逐步传递状态的做法，完全依靠**自注意力机制（Self-Attention）**让所有词在单一步骤内两两计算关联，并借助多头投影、位置编码和残差层归一化搭建出深度网络。如今，从 GPT 到 LLaMA 等绝大多数主流大模型，其底层算子均脱胎于这一架构。
 
-## 一场"意外"的革命
+本篇将通过贯穿实例，拆解 Transformer 的内部结构、数学推导与执行流程。
 
-故事要从 2017 年说起。
+![Transformer 编码器-解码器完整拓扑结构图](/images/content-rebuild/b8f84af469756dab/cover.png)
 
-当时 Google 的机器翻译团队只是想改进一下现有的翻译系统。他们尝试用注意力机制来增强 RNN 模型，结果一不小心，把整个 RNN 都给抛弃了。
+---
 
-这就好比你本来只是想换个沙发，结果把整个客厅都重新装修了。
+## 1. 为什么抛弃循环？从 RNN 的瓶颈看 Transformer 的设计初衷
 
-Transformer 的设计初衷很简单：改进机器翻译。但它的影响远超这个范围。八位作者之一 Aidan Gomez 后来回忆说，团队里的 Vaswani 从一开始就坚信这个方向会改变游戏规则。但其他人呢？大多只是觉得这是个还不错的尝试。
+在 Transformer 出现前，序列建模的主流方案是循环神经网络（RNN、LSTM 或 GRU，详见[/fundamentals/dl-basics/rnn-lstm-gru.md](/fundamentals/dl-basics/rnn-lstm-gru.md)）。
 
-这个"还不错的尝试"，后来成了大语言模型的基础架构。
+RNN 的核心计算公式为：
 
-![2017年论文《Attention Is All You Need》标题页，8位作者的合影，"Attention Is All You Need"大字醒目](/images/dl-basics/20260606_165117_722624_01.png)
+$$h_t = f(h_{t-1}, x_t)$$
+
+隐藏状态 $h_t$ 必须等待上一时刻的 $h_{t-1}$ 计算完毕后才能生成。这种时序串行依赖带来了两个严重限制：
+
+1. **无法利用 GPU 充分并行**：处理长度为 $T$ 的文本必须走完 $T$ 步循环，长文本的训练耗时极长，显存中保存的历史状态也会拖慢批处理吞吐。
+2. **远距离信息衰减**：句子首尾两个词若要发生关联，信息必须经过中间所有时间步的反复压缩与传递，极易发生梯度衰减或信息遗忘。
+
+Transformer 的解法是将时序递推转变为**全序列集合的两两直接交互**。原始论文采用了标准的**编码器-解码器（Encoder-Decoder）**结构（以 6 层编码器与 6 层解码器堆叠为例）：
+
+- **编码器（Encoder）**：每一层包含一个“多头自注意力层”和一个“逐位置前馈网络（FFN）”。它接收源序列，让所有词双向互相关联，输出富含全局上下文的向量表示。
+- **解码器（Decoder）**：每一层在上述两个子层之间，额外插入了一个“交叉注意力层（Cross-Attention）”，用解码器当前生成状态去检索编码器的输出；同时，解码器的自注意力被施加了“因果遮蔽”，防止生成当前词时偷看未来的答案。
+
+每个子层外部均配置了残差连接与层归一化（Layer Normalization，详见[/fundamentals/dl-basics/normalization.md](/fundamentals/dl-basics/normalization.md)），以保障反向传播梯度的平稳回传。
+
+---
+
+## 2. 自注意力（Self-Attention）与因果遮蔽
+
+### 2.1 序列内部自交互：Q、K、V 的计算
+
+关于缩放点积注意力的基础推导，我们在[/fundamentals/dl-basics/attention-mechanism.md](/fundamentals/dl-basics/attention-mechanism.md)中已作详细分析。在自注意力中，序列不是与外部向量比对，而是**自己与自己比对**。
+
+设输入序列经过词嵌入后的矩阵为 $X \in \mathbb{R}^{T \times d_{model}}$（其中 $T$ 为词数，$d_{model}$ 为特征维度）。模型使用三个参数矩阵将每个词映射为三种角色：
+
+- **查询矩阵（Query, $Q$）**：代表“当前词需要寻找什么样的上下文”，$Q = X W^Q$；
+- **键矩阵（Key, $K$）**：代表“当前词具有什么样的特征可供匹配”，$K = X W^K$；
+- **值矩阵（Value, $V$）**：代表“当前词实际包含的具体内容表征”，$V = X W^V$。
+
+计算公式如下：
+
+$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V$$
+
+以“小动物 没有 穿过 马路，因为 它 太 累 了”为例，当词元“它”作为 Query 与整句话所有词的 Key 进行点积匹配时，“小动物”的 Key 与“它”的 Query 计算出的内积得分最高，经过 Softmax 归一化后获得最大的权重。最终加权求和输出的向量中就自然融入了“小动物”的特征信息。
+
+引入缩放因子 $\sqrt{d_k}$ 的目的在于：当向量维度 $d_k$ 很大时，内积结果的方差会随着维度线性增大，导致点积值极大或极小，使 Softmax 输出进入饱和区，梯度几乎为 0。除以 $\sqrt{d_k}$ 可以将方差拉回稳定范围。
+
+### 2.2 因果遮蔽（Causal Mask）原理
+
+在文本生成任务中，模型必须按照自左向右的时序单向生成。当预测第 $i$ 个词时，模型绝对不能读取第 $j > i$ 位的后文信息。
+
+但在矩阵乘法 $Q K^T$ 中，所有词是全量并行计算的，第 $i$ 行天然包含了对后文所有词的点积。为了阻断未来信息泄漏，解码器自注意力层中引入了因果掩码矩阵 $M \in \mathbb{R}^{T \times T}$：
+
+$$M_{ij} = \begin{cases} 0, & j \le i \\ -\infty, & j > i \end{cases}$$
+
+将掩码与未归一化的得分相加后再送入 Softmax：
+
+$$\text{MaskedAttention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}} + M\right) V$$
+
+根据 Softmax 定义 $\text{softmax}(z)_j = \frac{e^{z_j}}{\sum_k e^{z_k}}$，当输入项加上 $-\infty$ 时，$e^{-\infty} = 0$。未来所有位置分配到的注意力权重被严格置为 0，无论前向计算还是反向求导，未来信息通道均被切断。
+
+![自注意力矩阵运算与因果遮蔽原理拆解](/images/content-rebuild/b8f84af469756dab/fig-1.png)
+
 <ReadMoreLock />
 
-## 注意力机制是怎么工作的？
+---
 
-在说 Transformer 之前，我们先搞清楚它的核心——注意力机制是怎么运作的。
+## 3. 多头注意力（Multi-Head Attention）
 
-每个词进入模型后，会被转换成三个向量：Query（查询）、Key（键）、Value（值）。
+### 3.1 为什么需要分头？
 
-这三个名字听起来很抽象，但其实很好理解。
+在单一注意力头中，所有注意力分数经过一次 Softmax 归一化，得到的是唯一的概率分布。
 
-想象你去图书馆找书。Query 就是你的问题："我想找关于人工智能的书"。Key 就是每本书的标签或简介，它会告诉你这本书和你的问题有多相关。Value 则是书的实际内容。
+然而，语言中的关联往往是多维度的。在我们的例子中，“它”既需要和主语“小动物”建立**代词指代关联**，也需要和谓语“累”建立**语法修饰关联**。如果只用单个注意力头，加权平均操作很容易顾此失彼，平滑掉微弱但关键的句法特征。
 
-你拿着问题去问每本书的 Key，然后根据匹配程度，决定从每本书里获取多少信息。
+多头注意力（MHA）通过将高维特征投影到多个独立的低维子空间，让不同头并行学习不同视角的关联模式。
 
-注意力机制的核心思想就这么简单：通过 Query 和 Key 的匹配程度，来决定应该关注哪些 Value。
+### 3.2 形式化计算与维度重整
 
-但单个注意力头只能看到一个角度。多头注意力机制让模型可以从多个角度同时分析。
+设头数为 $h$，每个头的特征维度为 $d_k = d_v = d_{model} / h$。对于第 $i$ 个头（$i \in \{1, \dots, h\}$），其投影参数矩阵为：
 
-比如看一句话"他打开了那个红色的盒子"：
+$$W_i^Q \in \mathbb{R}^{d_{model} \times d_k}, \quad W_i^K \in \mathbb{R}^{d_{model} \times d_k}, \quad W_i^V \in \mathbb{R}^{d_{model} \times d_v}$$
 
-- 一个头关注语法结构
-- 一个头关注语义关联
-- 一个头关注指代关系
+每个头在各自的子空间内独立运行点积注意力：
 
-多个头协同工作，就像一个团队从不同角度分析问题，最后综合得出结论。
+$$\text{head}_i = \text{Attention}(Q W_i^Q, K W_i^K, V W_i^V) \in \mathbb{R}^{T \times d_v}$$
 
-还有一个有趣的细节：注意力是非对称的。
+计算完毕后，将所有头的输出向量沿特征维度拼接（Concat），最后通过一个整合投影矩阵 $W^O \in \mathbb{R}^{h d_v \times d_{model}}$ 映射回原始维度：
 
-你很在意某个人，不代表那个人也在意你。这种不对称性在理解上下文时非常关键。比如"他很难过，因为考试没考好"——我们需要知道是"他"在难过，而不是"考试"在难过。
+$$\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \dots, \text{head}_h) W^O$$
 
-![QKV三向量计算过程简图，展示Query匹配Key并加权Value的流程，用图书馆找书的场景类比](/images/dl-basics/20260606_165115_744064_01.png)
-## 并行处理：Transformer 碾压 RNN 的关键
+![多头注意力子空间切分、并行计算与拼接重整流程](/images/content-rebuild/b8f84af469756dab/fig-2.png)
 
-注意力机制很强大，但如果底层架构效率低下，再强的能力也发挥不出来。
+### 3.3 算力核算：多头是否比单头更消耗运算量？
 
-这就要说到 Transformer 真正厉害的地方了——并行处理。
+直觉上，计算 $h$ 个头似乎会让计算量膨胀 $h$ 倍。我们按照标准矩阵乘法 $A_{m \times k} \times B_{k \times n}$ 耗费 $2 m k n$ 次浮点运算（乘加各算一次）来进行定量核算。
 
-我们来对比一下 RNN 和 Transformer 的工作方式。
+设序列长度为 $T$，特征维度为 $d$：
 
-RNN 处理一句话，就像排队买票。你必须一个一个来，前一个人买完，下一个人才能上。如果前面那个人选了十分钟，后边的人就只能干等。
+1. **单头注意力（维度为 $d$）**：
+   - 生成 $Q, K, V$ 投影：$3 \times (2 T \cdot d \cdot d) = 6 T d^2$
+   - 计算点积矩阵 $Q K^T$：$2 T \cdot d \cdot T = 2 T^2 d$
+   - 权重矩阵乘以 $V$：$2 T \cdot T \cdot d = 2 T^2 d$
+   - 输出投影 $W^O$：$2 T \cdot d \cdot d = 2 T d^2$
+   - **总运算量**：$8 T d^2 + 4 T^2 d$
 
-Transformer 呢？它可以同时处理整个序列。
+2. **多头注意力（$h$ 个头，每个头维度 $d_k = d / h$）**：
+   - 生成所有头的 $Q, K, V$ 投影：$h \times [3 \times (2 T \cdot d \cdot (d/h))] = 6 T d^2$
+   - 各头计算点积矩阵：$h \times [2 T \cdot (d/h) \cdot T] = 2 T^2 d$
+   - 各头加权聚合 $V$：$h \times [2 T \cdot T \cdot (d/h)] = 2 T^2 d$
+   - 输出拼接后映射 $W^O$：$2 T \cdot (h \cdot d/h) \cdot d = 2 T d^2$
+   - **总运算量**：$8 T d^2 + 4 T^2 d$
 
-就像自助取票机，所有人同时操作，互不干扰。10 个人买票，RNN 可能要 10 分钟，Transformer 可能只要 1 分钟。
-
-这种并行能力带来了什么？
-
-训练速度大幅提升。
-
-之前受限于 RNN 的串行结构，模型没法太大。2017 年前，最大模型的参数大约是 9000 万。再大，训练时间就长得不可接受了。
-
-但 Transformer 出现后，一切都变了。
-
-Stanford 的研究人员把基于 Transformer 的模型称为"基础模型"（Foundation Model）。这个称呼的背后，是一个根本性的范式转移：以前是"训练一个模型解决一个问题"，现在是"预训练一个大模型，然后用少量数据微调解决各种问题"。
-
-简单来说，Transformer 让 AI 进入了"大模型时代"。
-
-![RNN串行处理与Transformer并行处理的时序对比，单车道排队和多车道并行的可视化](/images/dl-basics/20260606_165120_725632_01.png)
-
-## 从 9000 万到万亿：参数规模的爆炸
-
-数字最能说明问题。
-
-2017 年，Transformer 刚诞生时，最大模型的参数约 9000 万。
-
-2020 年，OpenAI 的 GPT-3 把这个数字推到了 1750 亿。1750 亿是什么概念？是 9000 万的将近两万倍。
-
-两年后，Google 的 Switch Transformer 突破了万亿参数大关。
-
-这种增长，不是线性增长，而是指数级增长。
-
-如果 2017 年的模型参数相当于一个班级的学生人数，那现在的模型参数已经相当于全人类的数量了。
-
-这种爆发式增长的前提，正是 Transformer 的并行训练能力。没有这个架构革新，训练万亿参数级别的模型？做梦去吧。
-
-为什么参数越多越好？
-
-你可以把参数理解为模型的"记忆容量"和"理解能力"。参数越多，模型能记住的知识越多，能理解的模式越复杂。
-
-但这不意味着参数多就一定好。关键是看这些参数是怎么被训练和组织的。这也是为什么有些小模型反而比大模型表现更好——训练方法和数据质量同样重要。
-
-![2017-2022年大模型参数规模增长时间线，对数坐标展示从9000万到万亿参数的指数级增长](/images/dl-basics/20260606_165132_431872_01.png)
-
-## 三种架构变体：不是所有 Transformer 都一样
-
-Transformer 不是铁板一块。
-
-它有三种主要的架构变体，每种都有自己的特点和适用场景。
-
-**编码器-解码器架构**是原版 Transformer 的设计，适合翻译这类任务——输入是一段序列，输出也是一段序列。类比一下，它像"同声传译专家"，先理解原文，再翻译成目标语言。代表模型是原版 Transformer 和 T5。
-
-**仅编码器架构**的代表是 BERT 和 RoBERTa。这种架构只保留编码器部分，擅长理解任务。比如判断一句话是正面还是负面，或者找出文本中的实体。这类模型像"阅读理解高手"，能看完整个输入，然后回答问题或做分类。但它有个局限：只能"看完再说"，没法边看边生成。
-
-**仅解码器架构**的代表是 GPT 系列。这种架构只保留解码器部分，擅长生成任务。它只能看到之前的输出，然后预测下一个词。更像是一位"写作大师"，不是在回答问题，而是在续写文本——一个词接一个词地生成。ChatGPT 用的就是这种架构。你输入一段话，GPT 逐字生成回复，每次生成一个字或一个词。
-
-![三种Transformer架构变体（编码器-解码器、仅编码器、仅解码器）的结构示意和代表模型对比](/images/dl-basics/20260606_165136_601536_01.png)
-
-## 超越 NLP：Transformer 的跨界能力
-
-Transformer 的影响力早就超出了自然语言处理领域。
-
-最著名的例子是 AlphaFold2。这个用 Transformer 架构的 AI 系统，解决了困扰生物学界 50 年的难题——预测蛋白质的三维结构。
-
-蛋白质是由氨基酸链折叠而成的三维结构。以前想知道结构，只能靠实验室里慢慢解析，耗时几年是常事。AlphaFold2 可以在几小时内预测出结构，准确率还很高。
-
-新药研发、疾病研究、基础生物学……所有这些领域都被加速了。
-
-在药物发现领域，MolBART 等模型用 Transformer 来预测分子的化学性质，帮助科学家更快地找到有潜力的候选药物。
-
-在音频处理领域，Transformer 被用来做语音识别和音乐生成。
-
-在多模态学习领域，Transformer 让 AI 能同时理解和生成文本、图像、音频。
-
-甚至在机器人控制领域，Transformer 也开始崭露头角。
-
-说到底，Transformer 本质上是一个通用的模式识别引擎。它擅长发现序列中各个元素之间的关系，而这种能力不限于文字。
-
-图片是像素序列，音频是波形序列，蛋白质是氨基酸序列，分子是原子序列……只要你能把问题表示成序列，Transformer 就有用武之地。
-
-## 写在最后：AI 革命的缩影
-
-从 2017 年那篇论文，到现在 GPT-4、Claude、Gemini 等百花齐放，Transformer 用不到十年时间重塑了整个 AI 领域。
-
-我们这个系列从机器学习的基本概念讲起，一路聊到了深度学习、神经网络、Attention 机制，直到今天的 Transformer。
-
-这条线索，其实就是 AI 发展的主线：怎么让机器更好地理解和处理信息？
-
-从最早的手动设计规则，到后来让机器自己学习特征；从 CNN 识别图像，到 RNN 处理序列，再到 Transformer 实现并行处理——每一次进步，都在突破之前的瓶颈。
-
-但技术的演进永无止境。
-
-当上下文窗口越来越大，当推理成本越来越高，当模型变得越来越大——下一个"Transformer 时刻"会来自何方？
-
-是更高效的注意力变体？还是全新的架构范式？
-
-也许，答案就藏在你们这一代人的手里。
+**结论**：在 $d_k = d_{model} / h$ 的设计下，多头注意力的理论浮点运算量与单头完全相等。多头机制并没有增加总计算成本，而是把单一的大矩阵运算拆分重构为多个并行的子空间比对，大幅提升了模型的表征容量。
 
 ---
 
-**系列回顾**
+## 4. 恢复语序：位置编码的设计原理
 
-12 篇文章，我们一起走过了 AI 的基础世界。从"什么是机器学习"到"Transformer 为什么成为大模型的基础"，希望这些内容能让你对 AI 有一个系统的认知框架。
+### 4.1 为什么自注意力缺乏位置感知？
 
-AI 不是魔法，也不是玄学。它是数学、概率论、计算机科学的集大成者，是无数研究者几十年努力的结晶。
+纯粹的自注意力公式具备**置换等变性（Permutation Equivariance）**。若没有额外的标识，模型本质上是一个集合处理器。
 
-理解它，你就能更好地使用它，甚至创造新的可能。
+设打乱序列顺序的置换矩阵为 $P \in \mathbb{R}^{T \times T}$（满足 $P P^T = I$）。如果将乱序后的输入 $X' = P X$ 传入注意力模块：
 
-下次当你和 ChatGPT 对话时，不妨想一想：这句话是怎么被"理解"的？下一个词是怎么被"预测"的？Transformer 里的注意力头在关注什么？
+$$Q' = P X W^Q = P Q, \quad K' = P K, \quad V' = P V$$
 
-问题永远比答案更有价值。
+代入计算：
+
+$$\text{Attention}(Q', K', V') = \text{softmax}\left(\frac{P Q (P K)^T}{\sqrt{d_k}}\right) (P V) = P \cdot \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) P^T P V = P \cdot \text{Attention}(Q, K, V)$$
+
+计算结果只是对原输出进行了行顺序置换，词本身的注意力表征并不包含该词在句子中的先后次序。对模型而言，“小动物 咬了 鳄鱼”和“鳄鱼 咬了 小动物”的处理方式毫无差异。因此，必须在输入端显式注入**位置编码（Positional Encoding, PE）**。
+
+### 4.2 正弦与余弦绝对位置编码
+
+Vaswani 等人设计了无需学习参数的正弦和余弦函数来生成位置向量。对于绝对位置 $pos \in [0, T-1]$，在其特征通道的偶数索引 $2i$ 与奇数索引 $2i+1$ 处分别计算：
+
+$$PE_{(pos, 2i)} = \sin\left(\frac{pos}{10000^{2i / d_{model}}}\right)$$
+
+$$PE_{(pos, 2i+1)} = \cos\left(\frac{pos}{10000^{2i / d_{model}}}\right)$$
+
+该设计具备两个重要性质：
+
+1. **波长从短到长平滑分布**：波长 $\lambda_i = 2\pi \cdot 10000^{2i / d_{model}}$。低维通道变化极快，对应高频波形；高维通道变化平缓，对应低频波形。不同维度的组合为每个位置赋予了唯一的数值指纹。
+2. **相对位置的三角变换特性**：根据三角函数和差化积公式，对于任意固定的相对偏移 $k$，位置 $pos+k$ 处的正弦与余弦值可以表示为位置 $pos$ 处分量的线性组合：
+
+$$\begin{pmatrix} PE_{(pos+k, 2i)} \\ PE_{(pos+k, 2i+1)} \end{pmatrix} = \begin{pmatrix} \cos(\omega_i k) & \sin(\omega_i k) \\ -\sin(\omega_i k) & \cos(\omega_i k) \end{pmatrix} \begin{pmatrix} PE_{(pos, 2i)} \\ PE_{(pos, 2i+1)} \end{pmatrix}$$
+
+作者假设这种旋转矩阵形式能帮助网络更容易通过线性投影学习到词与词之间的相对距离。原版 Transformer 直接将位置向量与词嵌入向量逐元素相加（$X + PE$）作为最终输入。
+
+![正弦余弦位置编码频域波长与旋转变换机制](/images/content-rebuild/b8f84af469756dab/fig-3.png)
+
+---
+
+## 5. 残差连接与归一化：Post-LN 与 Pre-LN
+
+为了训练数十甚至上百层的深度网络，残差连接（$x + \text{Sublayer}(x)$）与层归一化是不可或缺的组合。但归一化层的放置顺序对反向传播稳定性有极大影响。
+
+### 5.1 Post-LN（原版设计）：为何需要谨慎的 Warm-up？
+
+原始论文采用的是 **Post-LN** 结构，即先做残差相加，再做 LayerNorm：
+
+$$x_{l+1} = \text{LayerNorm}(x_l + \text{Sublayer}(x_l))$$
+
+对该式求导可知，反向传播的梯度每次穿透主干时，都必须连乘当前层 LayerNorm 的雅可比矩阵：
+
+$$\frac{\partial x_{l+1}}{\partial x_l} = \frac{\partial \text{LayerNorm}(z_l)}{\partial z_l} \cdot \left( I + \frac{\partial \text{Sublayer}(x_l)}{\partial x_l} \right)$$
+
+当网络层数较深时，由于每一层方差分布不同，梯度在穿透多层 LayerNorm 导数后极易出现幅度波动或衰减。这也是原版 Transformer 训练初期非常不稳定、必须依赖多步学习率预热（Warm-up）将学习率从 0 极其平缓拉起的原因。
+
+### 5.2 Pre-LN（现代标配）：纯净的残差高速路
+
+后来的研究与绝大多数开源模型（如 LLaMA）转向了 **Pre-LN** 结构，即将归一化放在每个子层运算之前，残差主干只做纯相加：
+
+$$x_{l+1} = x_l + \text{Sublayer}(\text{LayerNorm}(x_l))$$
+
+展开至第 $L$ 层，其形式为：
+
+$$x_L = x_0 + \sum_{l=0}^{L-1} \text{Sublayer}(\text{LayerNorm}(x_l))$$
+
+反向传播对初始输入 $x_0$ 的梯度（设训练损失为标量 $\mathcal{L}$）为：
+
+$$\frac{\partial \mathcal{L}}{\partial x_0} = \frac{\partial \mathcal{L}}{\partial x_L} \frac{\partial x_L}{\partial x_0} = \frac{\partial \mathcal{L}}{\partial x_L} \left( I + \sum_{l=0}^{L-1} \frac{\partial \text{Sublayer}(\text{LayerNorm}(x_l))}{\partial x_0} \right)$$
+
+这里的恒等单位矩阵 $I$ 构成了一条无障碍传递梯度的通道。深层损失可以直接穿透多层直达底层输入，极大地提高了百层超深模型的收敛稳定性。
+
+![Post-LN 与 Pre-LN 拓扑结构与反向梯度流向对比](/images/content-rebuild/b8f84af469756dab/fig-4.png)
+
+---
+
+## 6. 逐位置前馈网络（Position-wise FFN）
+
+在自注意力子层之后，每个位置的向量都会独立输入一个两层的全连接前馈网络：
+
+$$\text{FFN}(x) = \max(0, x W_1 + b_1) W_2 + b_2$$
+
+在标准配置中，隐藏层维度通常拓展为特征维度的 4 倍（即 $d_{model}=512, d_{ff}=2048$）：
+
+```python
+import torch
+import torch.nn as nn
+
+class PositionwiseFeedForward(nn.Module):
+    def __init__(self, d_model: int = 512, d_ff: int = 2048, dropout: float = 0.1):
+        super().__init__()
+        self.w_1 = nn.Linear(d_model, d_ff)
+        self.w_2 = nn.Linear(d_ff, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = nn.ReLU()  # 现代模型常用 GELU 或 SwiGLU
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 输入 x 形状: (batch_size, seq_len, d_model)
+        # 升维非线性映射 -> dropout -> 降维还原回 d_model
+        return self.w_2(self.dropout(self.activation(self.w_1(x))))
+
+# 验证维度输入输出一致性
+x = torch.randn(2, 16, 512)
+ffn = PositionwiseFeedForward(512, 2048)
+out = ffn(x)
+assert out.shape == (2, 16, 512)
+```
+
+### 为什么注意力之后一定要跟一个 FFN？
+
+1. **引入非线性与维度重构**：自注意力本质上是对全句 Token 向量做加权凸组合，这是一种跨位置的线性混合。如果仅堆叠注意力层，模型相当于在反复进行线性组合。FFN 负责在每个 Token 内部的通道维度施加非线性变换，重构特征表征。
+2. **存储静态模式关联**：近年的模型解释性研究指出，FFN 的第一层参数相当于模式检测器（Key），第二层参数相当于知识写入器（Value），大模型参数量中占比超过一半的 FFN 承担了大量事实知识与语法规则的存储任务。
+
+![逐位置前馈网络升维映射与非线性特征重整机制](/images/content-rebuild/b8f84af469756dab/fig-5.png)
+
+---
+
+## 7. 训练与推理的工作机制对比
+
+虽然 Transformer 摆脱了循环计算，但在自回归文本生成任务中，训练和推理呈现出截然不同的行为特征：
+
+| 对比维度 | 训练阶段（Training） | 推理阶段（Inference / Generation） |
+| :--- | :--- | :--- | 
+| **核心机制** | 并行化前向传播（Teacher Forcing） | 单步串行自回归生成（Autoregressive） |
+| **输入方式** | 真实标签序列整体切片传入 | 由 Prompt 启动，前一步生成的词作为下一步输入 |
+| **前向计算次数** | 单次矩阵运算完成全序列预测 | 生成 $N$ 个词需循环执行 $N$ 次前向传播 |
+| **掩码作用** | 强制屏蔽上三角防止偷看后文；结合 Padding 掩码屏蔽填充位 | Prefill 阶段与投机解码仍需因果掩码；单 Token 解码无未来 KV，但批量生成仍需 Padding 掩码 |
+| **显存与计算侧重点** | 需保存各层中间激活值以备反向传播（PyTorch autograd） | 引入 KV Cache 缓存历史键值，避免重复矩阵乘法 |
+
+### 7.1 训练期：Teacher Forcing 实现单步并行
+
+在训练阶段，由于标注答案已知，模型无需等待上一个词生成完成。我们直接将完整目标序列右移一位后一次性送入解码器。
+
+由于有因果掩码的遮挡，位置 1 只能看到第一项并预测第二项；位置 5 只能看到前五项并预测第六项。全序列每个位置的交叉熵损失可以在一次 GPU 矩阵乘法中并行求出，随后依靠 PyTorch 自动求导（`loss.backward()`，见 [PyTorch autograd](https://docs.pytorch.org/tutorials/beginner/basics/autogradqs_tutorial.html)）同步更新全部参数。
+
+### 7.2 推理期：Prefill 与 Decode 循环
+
+推理阶段没有完整参考答案，模型必须自回归步进，分为两个阶段：
+
+1. **Prefill（预填充）阶段**：模型一次性读入用户输入的 Prompt，计算所有提示词的自注意力，并输出生成的第一个 Token。
+2. **Decode（解码）阶段**：将新生成的 Token 拼入序列末尾，再次执行前向传递预测下一个 Token。为了避免每次生成新词时都把所有历史词重新投影一遍 $K$ 和 $V$，工程实现上会把历史计算出的 $K$ 和 $V$ 缓存在显存中，这就是 **KV Cache**。
+
+![Transformer 并行训练与自回归单步推理时序对比图](/images/content-rebuild/b8f84af469756dab/fig-6.png)
+
+---
+
+## 总结与延伸
+
+Transformer 通过**自注意力**消除了序列建模对循环传递的依赖，通过**多头机制**在同等计算量下捕捉了多视角的语义关联，通过**位置编码**注入了时序坐标，并通过 **Pre-LN** 结构保障了深层梯度的顺畅传播。
+
+理解 Transformer 的前向张量流动与矩阵维度变化，是进一步掌握大语言模型显存开销（详见[/interview/llm-interview/transformer-memory.md](/interview/llm-interview/transformer-memory.md)）以及序列生成算法优化（详见[/interview/llm-interview/transformer-seq2seq.md](/interview/llm-interview/transformer-seq2seq.md)）的重要基础。

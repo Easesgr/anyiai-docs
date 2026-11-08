@@ -1,195 +1,260 @@
 ---
-title: 为什么 RAG 不应该只是检索一次？Agent 如何自动改写问题、补充检索和验证答案？
+title: 为什么单次检索经常不够用？RAG 如何做查询改写、补充检索与验证
 icon: mdi:magnify-expand
 tag:
-  - Agentic RAG
-  - 多步检索
-  - 查询改写
-  - 答案验证
+- Agentic RAG
+- 多步检索
+- 查询改写
+- 答案验证
+description: 单次检索易因术语差异或指代缺失而失效。本文通过具体用例，讲解证据评估、查询改写、增量合并及事实校验的循环检索机制与防死循环设计。
 ---
 
-# 为什么 RAG 不应该只是检索一次？Agent 如何自动改写问题、补充检索和验证答案？
+传统的检索增强生成（RAG）流水线通常是一次性的：用户输入问题，系统转为向量进行检索，取 Top-K 文档拼接成上下文，交由大语言模型生成答案。在上一讲[/frontier/agentic-rag/what-is-agentic-rag.md](/frontier/agentic-rag/what-is-agentic-rag.md)中，我们区分了线性 RAG 与带状态控制的系统：引入 Agent 机制的核心目的，不是为了套用复杂的外部框架，而是在检索与生成之间加入**状态记录、证据评估与重试控制**。
 
-![COVER](/images/agentic-rag/multi-step-retrieval_cover.png)
+线性流水线预设了一个前提：**单次召回的文档块一定包含回答问题所需的完整事实**。但在实际业务中，用户提问往往不够规范，知识库的文档切分也各不相同，单次检索经常出现遗漏。如果系统不做检查就直接生成，模型只能基于残缺信息强行推理，从而产生看似合理实则错误的猜测。
 
-先说清楚这道题在考什么：它考察你对 RAG 系统进化的理解深度。普通 RAG 的"问-查-答"线性流程你肯定知道，但面试官想看你是否理解**为什么一次检索不够用**、Agent 如何自主决策、以及 Query 改写和结果验证的具体机制。
+我们来看一个贯穿全文的具体例子：用户在运维支持系统提问：“**升级到 v2.4 之后接口报 403 怎么排查？**”
+- 系统初次检索召回了两篇文档：《通用 403 权限排查手册》和《v2.4 版本发布说明》；
+- 《通用 403 权限排查手册》讲解的是账号权限与 IP 白名单，完全没提 v2.4 的变化；
+- 《v2.4 版本发布说明》只写了“安全加固：网关层启用双向认证 mTLS”，没有出现“403”字样。
 
-这篇文章把 Agentic RAG 的核心逻辑讲透，帮你搞定这道综合深度题。
+如果只做一次检索，模型拿到这两篇文档，要么回答“请检查 IP 白名单”（错误建议），要么直接回答“文档中未提及”。但在循环检索流程中，系统会先检查证据是否充足，发现缺少“v2.4 与 403 报错之间的关联因果”，接着自动把查询改写为“v2.4 网关 mTLS 证书 403 报错”，触发二次检索拿到《mTLS 客户端证书 SAN 扩展缺失报错排查》，最终拼出准确答案并完成校验。
+
+本文聚焦于**围绕单一明确问题展开的检索、判定、改写与补充流程**。跨文档的复杂子任务拆解将在后续的[/frontier/agentic-rag/complex-query-planning.md](/frontier/agentic-rag/complex-query-planning.md)中讨论。
+
+![循环检索机制全景图](/images/content-rebuild/375b8b80741ff721/cover.png)
+
+---
+
+## 单次检索的三种典型失效场景
+
+单次检索拿不到关键证据，通常不是数据库离线，而是用户输入与知识库表达之间存在逻辑差距。最常见的有以下三类场景：
+
+### 1. 词表不匹配（Vocabulary Mismatch）
+用户提问习惯使用日常口语或现象描述，而知识库通常使用标准术语、缩写或代码符号。例如，用户提问“数据库写入太慢怎么自动切备机”，而核心文档的标题是“心跳超时与 failover 仲裁阈值配置”。
+- 稠密向量检索（Dense Retrieval）会将多词语义压缩为固定维度向量，容易被泛化的“数据库性能调优”文档吸引，反而忽略特定的切换配置；
+- 稀疏关键词检索（如 BM25）则因为没有字符重叠而直接漏检。关于不同检索机制的权衡，可参考[/interview/rag-interview/retrieval-methods.md](/interview/rag-interview/retrieval-methods.md)。
+
+### 2. 上下文缺失与指代模糊（Context Ambiguity）
+用户的单句输入通常缺少全局约束。例如提问“升级后报错 403 怎么排查？”，句中没有说明是哪个业务组件、什么协议、从哪个版本升上来。检索器在索引库中搜索“403”，会同时召回对象存储权限、网页代理、网关认证等数十篇互不相干的文档，有效信息被噪声淹没。
+
+### 3. 弱区分度文档块干扰（Weak-discriminative Distraction）
+知识库文档在切分时常以固定长度或段落截断。很多召回的文档块仅包含功能背景、配置项名称列表或法律声明，字面与提问高度重合，但缺少核心的因果细节（如“默认值”、“先决条件”或“已知异常”）。模型拿到这类文档，往往陷入“看似查到了，其实没法下结论”的状态。
+
+![单步检索失败的三类典型场景对比](/images/content-rebuild/375b8b80741ff721/fig-1.png)
+
+| 失败场景 | 输入特征 | 召回结果特征 | 传统单步 RAG 表现 | 循环系统应对机制 |
+| :--- | :--- | :--- | :--- | :--- |
+| **词表不匹配** | 口语化、高层抽象、使用别名 | 语义泛化、缺少具体参数的文档 | 输出空泛建议，无法定位问题 | 识别未命中术语，自动补齐同义词与技术代号 |
+| **上下文缺失** | 缺少环境、组件、版本前置信息 | 跨组件杂乱文档混合召回 | 拼凑出无关模块的错误答案 | 判定缺失约束，改写查询提取核心实体 |
+| **弱区分度干扰** | 包含提问里的关键词 | 背景套话居多，缺乏具体因果 | 强行根据无依据片段做猜测 | 判定证据不充分，定向补充核心排查事实 |
 
 ---
 
-## 1. 普通 RAG 的单次检索为什么不够用
+## 检索证据充分性判定：如何判断“查够了没有”？
 
-先看普通 RAG 的流程：
+在把检索结果交给模型写出最终答案前，需要设立一道**判定节点**。如果当前拿到的文档足以回答问题，则进入生成环节；如果关键证据残缺，则提取出缺失的信息点，交由下游重试。
 
-用户问问题 → 向量数据库检索 → 把检索结果塞给 LLM → 生成答案
+判定证据是否充足，不能仅让大模型输出简单的“好”或“不好”，而需要约定结构化的输入与输出格式（Contract），从三个具体维度进行审查：
 
-这套流程处理"2023 年苹果公司的营收是多少"这种单跳查询没问题。但一旦问题稍微复杂一点，它就露馅了。
+1. **实体覆盖度（Entity Coverage）**：提问涉及的主体、动作、环境版本是否在文档中都有明确描述？
+2. **因果链条完整度（Causal Completeness）**：若用户问的是“排查步骤”或“配置原因”，文档是否给出了推导逻辑，而不仅仅是一句结论？
+3. **信息一致性（Evidence Consistency）**：召回的多篇文档之间是否存在相互冲突的版本说明或参数定义？
 
-**什么问题它处理不了？**
+判定节点的结构化输出示例如下：
 
-"对比苹果和谷歌 2023 年的营收增长率"——这需要两步操作：先查苹果的数据，再查谷歌的数据，然后做计算对比。普通 RAG 只检索一次，根本完不成。
+```json
+{
+  "is_sufficient": false,
+  "confidence_score": 0.45,
+  "covered_aspects": ["确认了 403 报错属于网关鉴权阶段"],
+  "missing_aspects": ["缺少 v2.4 版本下 mTLS 证书校验规则与客户端配置要求"],
+  "decision": "REWRITE_AND_SUPPLEMENT"
+}
+```
 
-"过去三年营收持续增长的公司有哪些？"——需要跨多个时间点筛选，普通 RAG 做不到。
+![证据充分性判定的结构化处理流程](/images/content-rebuild/375b8b80741ff721/fig-2.png)
 
-"这份合同里的关键风险条款是什么？"——需要理解文档结构并做摘要，普通 RAG 只会匹配关键词。
-
-**检索失败的隐形风险更可怕**
-
-普通 RAG 还有一个致命问题：**它不知道自己检索失败了**。
-
-当返回的文档根本不相关时，它会硬着头皮基于错误信息生成答案，你以为它在认真回答，其实是在"一本正经地胡说八道"。
-
-这种错误比直接说"不知道"危害大得多。
-
-用一个场景来类比：想象你带着一本百科全书去考试，但规则是**只允许翻一次**就答题。"对比 A 和 B 的差异"这种问题，你根本没法答。
-
-普通 RAG 就是这样被限制了。
-
-![普通 RAG 线性流程与复杂问题处理失败的对比图](/images/agentic-rag/20260716_201909_570816_01.png)
-
----
+通过强制模型输出缺失清单（`missing_aspects`），下游的改写节点才能明确知道“接下来该去搜什么”，避免盲目换词或无目的地循环。
 
 <ReadMoreLock />
 
+---
 
-## 2. Agentic RAG——让 Agent 自主决定"查什么、怎么查"
+## 查询改写：根据已知信息生成差异化检索词
 
-那怎么解决这个问题？
+当判定节点给出 `decision: REWRITE_AND_SUPPLEMENT` 时，系统不能用原来的句子去重新检索。底层索引库与检索算法在输入不变时会返回完全一致的结果，二次检索必须具备**差异性（Variance）**。
 
-答案很简单：**不要只查一次，让 Agent 决定要不要继续查**。
+查询改写通常接收三项输入：
+- **原始问题（Original Query）**：锚定用户的核心诉求；
+- **已检索上下文摘要（Retrieved Context Summary）**：说明哪些事实已经查明，避免重复检索同质文档；
+- **缺失维度列表（Missing Aspects）**：明确本次补充检索必须攻克的目标。
 
-Agentic RAG 的核心变化是把"检索-生成"的线性流程，变成 Agent 驱动的多轮循环。
+![查询改写机制与差异化检索词生成](/images/content-rebuild/375b8b80741ff721/fig-3.png)
 
-它的逻辑是这样的：
-
-1. Agent 接收用户问题
-2. Agent 判断需要什么信息，生成查询语句去检索
-3. Agent 评估检索结果是否足够、是否相关
-4. 如果不够，Agent 会改写查询继续检索
-5. 如果相关但不够完整，Agent 会补充检索
-6. 最后 Agent 验证答案来源可靠，再生成最终回答
-
-关键点在于：**Agent 能判断检索结果的质量，能决定下一步行动**。
-
-用个类比：普通 RAG 像一个死板的考生，翻一次书就答题。而 Agentic RAG 像一个老练的考生——遇到不确定的题会先思考要查什么，查完会判断对不对，不对就换个角度继续查。
-
-这才是 Agentic RAG 和普通 RAG 的**本质区别**：不是多了几次检索，而是有了判断和决策能力。
-
-![Agentic RAG 多轮检索循环流程图，包含判断、改写、补充检索节点](/images/agentic-rag/20260716_201906_542208_01.png)
+在工程落地中，改写通常生成两种检索输入：
+1. **面向关键词与稀疏索引的布尔表达式**：将口语转化为精准的技术术语。例如把“升级后 403”改写为 `"v2.4" AND "mTLS" AND ("client certificate" OR "SAN")`。在混合检索场景下，这一步可以补足稠密向量对生僻专有名词不敏感的短板，混合检索的配置细节可参考[/interview/rag-interview/hybrid-retrieval.md](/interview/rag-interview/hybrid-retrieval.md)。
+2. **面向稠密向量的假设性文档或描述句（HyDE）**：由模型根据缺失维度，生成一段符合技术手册风格的短陈述，再对该陈述计算向量进行检索，缩短口语提问与书面知识库之间的表征距离。
 
 ---
 
-## 3. Query 改写的三种核心策略
+## 补充检索与状态合并：去重、打分与窗口截断
 
-Agentic RAG 之所以能"查得准"，Query 改写功不可没。
+二次检索会带回一批新的文档块。此时不能直接覆盖原有的检索结果，因为初次检索可能已经拿到了部分有用信息，完全覆盖会导致信息丢失。
 
-用户提问题和知识库表述往往不一致。比如用户问"苹果手机配置"，知识库里可能写的是"iPhone 14 硬件规格"。Query 改写就是解决这个"语言鸿沟"。
+系统需要维护一个状态容器，对新增的文档执行**去重、合并与窗口截断**：
 
-**策略一：HyDE（假设性文档嵌入）**
+```
+   初次检索文档池 D_0
+         │
+         ├── 过滤完全重复的文档块 (按 hash(chunk_content))
+         ▼
+   增量候选集 D_delta (二次检索召回)
+         │
+         ▼
+   合并证据池 D_merged = 去重(D_0 ∪ D_delta)
+         │
+         ▼
+   重排模型 (Cross-Encoder Reranker) 统一打分
+         │
+         ▼
+   窗口裁剪: 取最终得分最高的前 Top-K 片段输入生成器
+```
 
-HyDE 的思路很巧妙：让 LLM 先根据问题**生成一个假设性的答案片段**，然后用这个假设答案去检索。
+![增量文档合并、去重与重排窗口控制](/images/content-rebuild/375b8b80741ff721/fig-4.png)
 
-为什么这样有效？因为假设答案可能包含了知识库会用到的表述方式。比如用户问"如何训练大模型"，假设答案可能提到"fine-tuning"、"pre-training"这些术语，帮助检索命中相关文档。
-
-**策略二：任务拆解**
-
-对于复杂问题，直接检索往往效果差。任务拆解把问题分解成多个简单子问题。
-
-"对比特斯拉和比亚迪的竞争优势"拆成：
-- 子问题 1：特斯拉的竞争优势是什么？
-- 子问题 2：比亚迪的竞争优势是什么？
-
-每个子问题单独检索，最后再整合对比。
-
-**策略三：历史融合**
-
-多轮对话时，当前问题往往依赖上下文。用户先问"什么是 RAG"，再问"它怎么提升准确性"，第二个问题需要结合历史才能完整理解。
-
-历史融合把当前问题和对话历史整合成一个完整的检索查询。
-
-这三种策略各有适用场景：HyDE 适合开放式问题、术语多样时；任务拆解适合多跳问题、对比问题；历史融合适合多轮对话。
-
-![三种 Query 改写策略对比与适用场景图](/images/agentic-rag/20260716_201905_903680_01.png)
+在状态维护中，最关键的限制是**控制上下文长度**。如果每一轮检索都无上限地向后追加，不仅会导致 API 费用和响应耗时线性增加，还会让模型在过长的上下文中出现“中间遗忘”（Lost in the Middle）现象。因此，状态中必须设置文档数量或 Token 上限，并在每轮通过重排模型淘汰得分较低的边缘片段。
 
 ---
 
-## 4. 结果验证——确保答案真的可靠
+## 答案事实校验：验证推论并过滤未支持内容
 
-检索做得好不好，需要验证。Agentic RAG 引入了结果验证机制，核心思路是**让模型学会"回头检查"**。
+当证据集最终判定充足并生成候选答案后，大语言模型仍有可能借助其预训练参数中的外部记忆，填补文档中没有提到的细节。为了保证企业问答的严谨性，需要对生成的文本进行**反向事实核验（Attribution & Entailment）**：
 
-**Self-RAG 的反思 token**
+1. **命题切分**：将候选答案拆分为独立的陈述句命题集合 $\{S_1, S_2, \dots, S_n\}$；
+2. **自然语言蕴含推理（NLI）**：针对每一个命题 $S_i$，在最终证据池中寻找能够支撑它的文档片段；
+3. **状态标记**：
+   - **Supported（有据可查）**：文档中有明确证据支持；
+   - **Contradictory（与事实相悖）**：与文档描述存在直接矛盾；
+   - **Unsupported（无证据推断）**：文档未提及，属于模型自行发挥。
 
-Self-RAG 是斯坦福提出的方案，它让模型在生成过程中输出特殊的反思 token。这些 token 有三种类型：
+![答案事实校验与逐句归因图](/images/content-rebuild/375b8b80741ff721/fig-5.png)
 
-- **Retrieve token**：判断是否需要检索
-- **IsRel token**：判断检索结果是否相关
-- **IsSup token**：判断生成内容是否被检索结果支持
-
-模型会根据这些 token 的评估结果决定下一步：检索结果不相关？改写查询继续查。生成内容不被支持？重新生成。
-
-**CRAG 的轻量级验证**
-
-CRAG 用一个轻量分类器（T5-large）给检索结果打分。如果相关性高，继续生成；如果相关性低，自动切换到网络搜索补充外部资源。
-
-说白了就是：知识库查不到，就去网上搜。
-
-这个设计很实用，因为实际系统中，检索失败是常态。CRAG 给了系统一个保底方案。
-
-用考试的类比：写完答案要回头检查，确认每个论断都有依据才提交。Self-RAG 和 CRAG 就是在做这个"检查"环节。
-
-![Self-RAG 反思 token 机制与结果验证流程图](/images/agentic-rag/20260716_201930_342656_01.png)
+一旦检测到 `Unsupported` 或 `Contradictory` 的句子，系统会执行校正逻辑：要求模型剔除未经证实的推论，或在句子后明确标注“当前文档未给出明确依据”。如果核心推论全部无依据，则返回“信息不足，无法确认”。
 
 ---
 
-## 5. 工程落地——不是所有场景都需要 Agentic RAG
+## 防御性工程设计：防止死循环与控制运行开销
 
-讲到这里，你可能会觉得 Agentic RAG 完胜普通 RAG。但工程上有个重要原则：**简单场景用普通 RAG，复杂场景才上 Agentic RAG**。
+循环检索让系统具备了重试与自我修正的能力，但也带来了工程风险：**如果模型始终判定证据不足，改写后又搜不到新内容，系统容易陷入死循环，耗尽 Token 额度并引发接口超时（HTTP 504）**。
 
-为什么？因为 Agentic RAG 有代价：延迟增加、成本上升、系统复杂度提高。对于"查询产品功能"这种简单问答，普通 RAG 够用且更快。
+为了保证系统在生产环境中的确定性，必须在控制流代码中加入四道防御机制：
 
-Google 的建议是**渐进式引入**：先跑通普通 RAG，验证文档召回没问题，再逐步加上 Agent 能力。
+1. **最大重试步数硬上限（Max Steps Bound）**：无论模型判断是否充足，循环步数达到预设值（通常建议为 2 次重试）必须无条件退出循环。
+2. **查询振荡检测（Query Oscillation Detection）**：比对当前改写词与历史检索词的相似度（如字符 Jaccard 相似度或向量余弦值）。若相似度过高，说明模型已无法提出新的检索角度，立即中止重试。
+3. **增量收益递减检测（Information Gain Decay）**：若新一轮检索经过去重后，没有引入任何新文档，或者重排最高分没有高于历史记录，说明已触及当前知识库的检索边界，停止重试。
+4. **兜底降级响应（Fallback Strategy）**：当触发上限跳出循环时，系统绝不抛出未经处理的异常，而是基于当前已累积的所有文档生成受限回答，并附带说明“已达到最大重试次数，以下内容根据现有部分文档整理，缺失：...”，提示人工介入。关于检索失败的常见排查手段，可参阅[/interview/high-freq-scenarios/rag-retrieval-failure.md](/interview/high-freq-scenarios/rag-retrieval-failure.md)。
 
-另一个工程要点是**工具扩展**。MCP 协议（Model Context Protocol）支持动态集成计算器、API 等工具。Agent 不只是检索，还能调用外部工具完成计算任务。
+![循环检索状态机熔断流转图](/images/content-rebuild/375b8b80741ff721/fig-6.png)
 
-比如用户问"我们公司去年营收增长了多少"，Agent 检索到营收数据后，可以调用计算器算出增长率，而不是让 LLM 硬算。
+下面给出一个完整的最小可运行原型代码，演示了带有步数限制、去重合并与充分性判定的循环检索状态机：
 
-工程落地的检查清单：
-1. 先验证单库召回率和相关性
-2. 简单场景用普通 RAG，别过度设计
-3. 复杂场景逐步引入多轮检索和工具调用
-4. 加上验证机制，确保答案来源可靠
+```python
+from typing import List, Dict, Any
 
-![普通 RAG 与 Agentic RAG 适用场景对比及工程落地路径图](/images/agentic-rag/20260716_201942_330496_01.png)
+# 模拟静态文档库
+MOCK_KNOWLEDGE_BASE = [
+    {"id": "doc_01", "text": "用户升级至平台 v2.4 之后，网关将强制开启双向认证机制。"},
+    {"id": "doc_02", "text": "通用 403 权限排查：请检查账号权限配置、IP 白名单以及网络访问策略。"},
+    {"id": "doc_03", "text": "若客户端证书缺少 SAN（Subject Alternative Name）扩展，网关鉴权模块将直接返回 ERR_403_CERT_INVALID 错误码。"}
+]
 
----
+def mock_bm25_search(query: str, top_k: int = 2) -> List[Dict[str, Any]]:
+    """模拟简易检索器：基于关键词匹配计算得分"""
+    scores = []
+    q_words = set(query.lower().split())
+    for doc in MOCK_KNOWLEDGE_BASE:
+        text = doc["text"].lower()
+        score = sum(1.0 for w in q_words if w in text)
+        scores.append((score, doc))
+    scores.sort(key=lambda x: x[0], reverse=True)
+    return [item[1] for item in scores[:top_k] if item[0] > 0]
 
-## 面试怎么答
+def evaluate_evidence(query: str, retrieved_docs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """判定节点：检查召回内容是否覆盖排查核心要素"""
+    text_block = " ".join([d["text"] for d in retrieved_docs])
+    has_version = "v2.4" in text_block or "升级" in text_block
+    has_cause = "SAN" in text_block or "mTLS" in text_block
+    
+    if has_version and has_cause:
+        return {"is_sufficient": True, "missing_aspects": []}
+    elif has_version and not has_cause:
+        return {"is_sufficient": False, "missing_aspects": ["mTLS 证书 403 错误原因与 SAN 扩展配置"]}
+    else:
+        return {"is_sufficient": False, "missing_aspects": ["v2.4 版本网关更新说明"]}
 
-**基础版（能过的回答）**：
+def rewrite_query(original_query: str, missing_aspects: List[str]) -> str:
+    """根据缺失维度组合成差异化新查询词"""
+    aspects_str = " ".join(missing_aspects)
+    return f"{original_query} {aspects_str}"
 
-普通 RAG 单次检索只能处理简单的事实查询，无法应对需要多步推理的问题。Agentic RAG 引入多轮检索循环，Agent 能判断检索结果是否相关、是否需要改写查询继续检索，直到获得足够信息才生成答案。
+def run_loop_rag(original_query: str, max_steps: int = 2) -> Dict[str, Any]:
+    # 运行状态初始化
+    state: Dict[str, Any] = {
+        "step": 0,
+        "current_query": original_query,
+        "query_history": set(),
+        "accumulated_docs": {},
+        "terminated_by": ""
+    }
+    
+    while state["step"] < max_steps:
+        curr_q = state["current_query"]
+        print(f"[Step {state['step']}] 执行检索，当前 Query: '{curr_q}'")
+        
+        # 振荡检测：若查询词完全重复则跳出
+        if curr_q in state["query_history"]:
+            state["terminated_by"] = "OSCILLATION_DETECTED"
+            break
+        state["query_history"].add(curr_q)
+        
+        # 执行检索并执行 ID 去重合并
+        new_docs = mock_bm25_search(curr_q)
+        added_count = 0
+        for doc in new_docs:
+            if doc["id"] not in state["accumulated_docs"]:
+                state["accumulated_docs"][doc["id"]] = doc
+                added_count += 1
+                
+        # 增量收益熔断：若未捞出新文档且已非首轮，则停止重试
+        if added_count == 0 and state["step"] > 0:
+            state["terminated_by"] = "NO_NEW_DOCS_FUSED"
+            break
+            
+        # 证据充分性评估
+        eval_result = evaluate_evidence(original_query, list(state["accumulated_docs"].values()))
+        if eval_result["is_sufficient"]:
+            state["terminated_by"] = "SUFFICIENT_EVIDENCE"
+            break
+            
+        # 改写查询并递增步数
+        state["current_query"] = rewrite_query(original_query, eval_result["missing_aspects"])
+        state["step"] += 1
+        
+    if not state["terminated_by"]:
+        state["terminated_by"] = "MAX_STEPS_REACHED"
+        
+    return state
 
-Query 改写解决"问不准"的问题。三种核心策略：HyDE 用假设答案引导检索方向；任务拆解把复杂问题分解为子问题分别检索；历史融合补全多轮对话的上下文。
+# 运行测试
+if __name__ == "__main__":
+    result = run_loop_rag("升级 v2.4 接口 403 排查")
+    print(f"\n执行结束。退出原因: {result['terminated_by']}，最终证据库文档数: {len(result['accumulated_docs'])}")
+    for doc_id, doc in result["accumulated_docs"].items():
+        print(f"  - [{doc_id}]: {doc['text']}")
+```
 
-Agent 还能验证检索结果质量。Self-RAG 用反思 token 评估相关性，CRAG 用分类器判断是否需要补充网络搜索。这些机制确保最终答案的可靠性。
-
-**加分版（让面试官眼前一亮）**：
-
-在基础版基础上，可以补充：
-
-Self-RAG 的反思 token 机制让模型在生成过程中自我评估，决定是否需要继续检索或重新生成。这种"边想边做"的模式是 Agentic RAG 的核心。
-
-CRAG 的设计很实用——知识库召回不好时自动切换到网络搜索，给系统加了保底。
-
-工程上不是所有场景都要上 Agentic RAG。Google 的建议是先验证普通 RAG 的召回效果，再逐步引入 Agent 能力。简单问答场景用普通 RAG 更快更省成本。
-
-ReAct 和 PlanAndSolve 等 Agent 工作流模式也有差异：ReAct 适合需要灵活决策的场景，PlanAndSolve 适合复杂任务的规划分解。实际选型要看具体场景。
-
-MCP 协议支持工具动态集成，Agent 能调用计算器、API 等扩展能力，这往往是工程落地的加分项。
-
----
-
-## 一句话总结
-
-Agentic RAG 的本质是让检索从"问-查-答"的线性流程，进化为 Agent 驱动的多轮迭代循环，通过 Query 改写解决表达差异、通过结果验证确保答案可靠，实现从"查一次"到"查得准"的跨越。
+在这段代码中：
+1. **Step 0**：初始查询仅命中了包含“升级”与通用权限排查的文档（doc_01、doc_02），判定节点识别出缺失具体的错误因果（缺少 SAN 扩展信息）；
+2. **Step 1**：查询被补充改写，加入了“mTLS 证书 403 错误原因与 SAN 扩展配置”，精准召回了包含错误码和排查方案的核心文档（doc_03）；
+3. 判定节点检测到关键因果链条已补齐，系统以 `SUFFICIENT_EVIDENCE` 正常跳出并输出，避免了盲目的无效检索。

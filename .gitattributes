@@ -1,0 +1,12 @@
+# Keep full-resolution teaching illustrations outside the Git object database.
+src/.vuepress/public/images/**/*.png filter=lfs diff=lfs merge=lfs -text
+src/.vuepress/public/images/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+src/.vuepress/public/images/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+src/.vuepress/public/images/**/*.webp filter=lfs diff=lfs merge=lfs -text
+src/.vuepress/public/images/**/*.gif filter=lfs diff=lfs merge=lfs -text
+
+# Small previews and the public QR code remain directly available on GitHub.
+src/.vuepress/public/images/home-previews/** -filter -diff -merge -text
+src/.vuepress/public/images/home-carousel/** -filter -diff -merge -text
+src/.vuepress/public/images/wechat-qrcode.png -filter -diff -merge -text
+docs/screenshots/** -filter -diff -merge -text

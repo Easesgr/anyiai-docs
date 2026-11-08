@@ -1,118 +1,53 @@
 ---
-title: AI 学习资料 PDF 下载
-description: 关注「安逸Ai」公众号，回复对应关键词（AI基础 / AI经典面试题 / 大模型100讲 / 前沿专题），领取持续更新的 AI 学习资料 PDF。
+title: 学习资料 PDF 获取与阅读指南
+description: 安逸Ai站内核心文章的离线 PDF 整理版领取方式与阅读说明，包含 AI 基础、面试题、大模型 100 讲及前沿专题四个方向。
 icon: mdi:file-pdf-box
 ---
 
-## PDF 资料包
+![安逸Ai技术资料整理与离线阅读示意图](/images/content-rebuild/8d0ac4021d8bc55b/cover.png)
 
-<div class="intro-card">
-  <div class="intro-card-icon">📚</div>
-  <div class="intro-card-content">
-    <p><strong>把网站中的核心知识整理成可以保存、打印和反复复习的 PDF。</strong></p>
-    <p>共四份资料包，每份对应一个领取关键词，覆盖 AI 基础、经典面试题、大模型 100 讲与前沿专题，并跟随网站内容持续更新。</p>
-  </div>
+为了方便大家在通勤、无网络环境或平板设备上做高亮批注与离线复习，本站将核心栏目的体系化文章整理成了分册 PDF 文档。PDF 内容均提炼自网站对应的公开栏目，保持与在线版相同的逻辑结构，并随站点更新进行阶段性汇总迭代。
+
+## 资料包内容与对应栏目
+
+目前共整理出四份离线 PDF 资料，分别对应站内的核心技术模块：
+
+1. **AI 基础**
+   - **内容范围**：整理自 [AI 基础](/fundamentals/) 栏目，涵盖机器学习经典算法、深度学习基础、Transformer 架构、大模型原理、Token 与分词机制、Embedding 向量化、模型训练与微调、推理生成及评估指标等 10 大核心模块。
+   - **公众号关键词**：`AI基础`
+
+2. **AI 经典面试题**
+   - **内容范围**：整理自 [AI 经典面试题](/interview/) 栏目，包含大模型核心考点、Prompt 工程、RAG 检索增强、Agent 架构设计、模型量化部署与工程高频实战场景题。
+   - **公众号关键词**：`AI经典面试题`
+
+3. **大模型 100 讲**
+   - **内容范围**：整理自 [大模型 100 讲](/llm-100/) 栏目，按技术演进脉络系统拆解大模型训练、对齐、Prompt 策略、检索增强架构与智能体工程落地的关键技术点。
+   - **公众号关键词**：`大模型100讲`
+
+4. **前沿专题**
+   - **内容范围**：整理自 [前沿专题](/frontier/) 栏目，深入解析 MCP 协议实现、Agentic RAG、GraphRAG、AI Coding Agent、长上下文工程及多智能体工作流编排等前沿方向。
+   - **公众号关键词**：`前沿专题`
+
+## 领取步骤与渠道
+
+本站所有 PDF 资料均免费提供，统一通过微信公众号「安逸Ai」进行分发与后续版本同步。
+
+1. 打开微信，扫描页面下方的二维码，或在微信搜索栏查找关注 **「安逸Ai」**。
+2. 进入公众号聊天界面，直接在对话框输入并发送对应资料的关键词（例如发送 `AI基础` 或 `AI经典面试题`）。
+3. 系统将在对话中返回对应的云盘或下载链接，点击即可保存至本地阅读。
+
+## 离线资料使用建议
+
+- **在线与离线对照**：PDF 属于阶段性导出的文档包。网站文章会随技术进展和读者勘误持续更新，如果阅读过程中发现疑问或需要查验最新示例，建议直接访问站内的 [AI 基础](/fundamentals/) 或 [前沿专题](/frontier/) 等对应页面对照查验。
+- **配合体系化学习**：建议先按 [学习路线](/learning-path/) 梳理整体技术树，将 PDF 用作重点章节的精读材料，并在阅读时使用 PDF 注释工具记录个人的推导笔记与疑问。
+- **查阅更新进度**：资料包的具体版本变动与更新记录，可参阅 [更新日志](/about/update-history.md) 或关注公众号发布的更新推送。
+
+## 关注微信公众号
+
+扫描下方二维码即可关注公众号，回复上述四个关键词获取对应资料：
+
+<div class="qrcode-card" style="max-width: 320px; margin: 1.5rem auto; text-align: center; padding: 1.5rem; border: 1px solid var(--vp-c-divider); border-radius: 8px;">
+  <img src="/images/wechat-qrcode.png" alt="安逸Ai 微信公众号二维码" style="width: 180px; height: 180px; margin: 0 auto; display: block; border-radius: 4px;" />
+  <p style="margin-top: 0.75rem; font-weight: 600;">微信公众号：安逸Ai</p>
+  <p style="font-size: 0.85rem; color: var(--vp-c-text-2); margin-top: 0.25rem;">后台回复：AI基础 / AI经典面试题 / 大模型100讲 / 前沿专题</p>
 </div>
-
-<div class="skill-tags pdf-skill-tags">
-  <span class="skill-tag">AI 基础</span>
-  <span class="skill-tag">AI 经典面试题</span>
-  <span class="skill-tag">大模型 100 讲</span>
-  <span class="skill-tag">前沿专题</span>
-  <span class="skill-tag">持续更新</span>
-</div>
-
-## 资料内容与对应关键词
-
-<div class="contact-grid pdf-resource-grid">
-  <div class="contact-card">
-    <div class="contact-icon pdf-icon-blue">🧭</div>
-    <div class="contact-info">
-      <div class="contact-name">AI 基础 · 10 大模块</div>
-      <div class="contact-detail">回复「AI基础」</div>
-      <div class="pdf-card-desc">机器学习、深度学习、Transformer、大模型基础、Token 与分词、Embedding、训练微调、推理生成、多模态、评估指标。</div>
-    </div>
-  </div>
-  <div class="contact-card">
-    <div class="contact-icon pdf-icon-purple">◈</div>
-    <div class="contact-info">
-      <div class="contact-name">AI 经典面试题 · 8 大专题</div>
-      <div class="contact-detail">回复「AI经典面试题」</div>
-      <div class="pdf-card-desc">大模型、Prompt、RAG、Agent、AI 编程、AI 系统设计、模型部署与高频场景题。</div>
-    </div>
-  </div>
-  <div class="contact-card">
-    <div class="contact-icon pdf-icon-teal">✦</div>
-    <div class="contact-info">
-      <div class="contact-name">大模型 100 讲 · 10 大模块</div>
-      <div class="contact-detail">回复「大模型100讲」</div>
-      <div class="pdf-card-desc">基础、训练原理、微调与对齐、Prompt 工程、RAG、Agent 基础与工程、应用系统、部署与评估。</div>
-    </div>
-  </div>
-  <div class="contact-card">
-    <div class="contact-icon pdf-icon-orange">⌘</div>
-    <div class="contact-info">
-      <div class="contact-name">前沿专题 · 15 大专题</div>
-      <div class="contact-detail">回复「前沿专题」</div>
-      <div class="pdf-card-desc">MCP 协议、Agentic RAG、GraphRAG、AI Coding Agent、上下文工程、Agent 记忆系统、Vibe Coding 等。</div>
-    </div>
-  </div>
-</div>
-
-## 领取方式
-
-<div class="timeline pdf-timeline">
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">STEP 01</div>
-      <div class="timeline-title">扫码关注「安逸Ai」公众号</div>
-      <div class="timeline-desc">使用微信扫描下方二维码，进入公众号。</div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">STEP 02</div>
-      <div class="timeline-title">回复对应资料包的关键词</div>
-      <div class="timeline-desc">想领取哪份资料，就在对话框发送对应关键词，例如发送 <strong>AI基础</strong> 领取 AI 基础资料包。四个关键词见上方卡片。</div>
-    </div>
-  </div>
-  <div class="timeline-item">
-    <div class="timeline-dot"></div>
-    <div class="timeline-content">
-      <div class="timeline-date">STEP 03</div>
-      <div class="timeline-title">下载并获取后续更新</div>
-      <div class="timeline-desc">领取当前最新版；资料更新与新增内容会通过公众号同步。</div>
-    </div>
-  </div>
-</div>
-
-## 关注公众号领取
-
-<div class="qrcode-card pdf-qrcode-card">
-  <svg class="qrcode-deco qrcode-deco-scan" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10V4h6M28 10V4h-6M4 22v6h6M28 22v6h-6"/></svg>
-  <svg class="qrcode-deco qrcode-deco-chat" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 18a10 10 0 1 1 5 8.7L5 28l1.3-4A10 10 0 0 1 5 18z"/><path d="M20 26a8 8 0 1 0-4-6.9L15 22l3-.8A8 8 0 0 0 20 26z"/></svg>
-  <svg class="qrcode-deco qrcode-deco-spark s1" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
-  <svg class="qrcode-deco qrcode-deco-spark s2" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
-  <svg class="qrcode-deco qrcode-deco-spark s3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1l2 9 9 2-9 2-2 9-2-9-9-2 9-2z"/></svg>
-  <div class="qrcode-wrap">
-    <img src="/images/wechat-qrcode.png" alt="安逸Ai 微信公众号二维码" class="qrcode-img">
-  </div>
-  <p class="qrcode-text">扫码关注 <em>「安逸Ai」</em> 公众号</p>
-  <p class="qrcode-text pdf-keyword">回复对应关键词领取资料包</p>
-  <div class="pdf-keyword-list">
-    <span>「AI基础」</span>
-    <span>「AI经典面试题」</span>
-    <span>「大模型100讲」</span>
-    <span>「前沿专题」</span>
-  </div>
-</div>
-
-::: tip 版本说明
-PDF 资料仅供个人学习使用。网站内容持续更新，公众号内提供的版本会同步迭代。
-:::
-
-<style>
-.pdf-skill-tags{margin-top:1.25rem}.pdf-resource-grid{margin-top:1rem}.pdf-resource-grid .contact-card{cursor:default}.pdf-icon-blue{background:linear-gradient(135deg,#e8f2ff,#d9e8ff);color:#4f7df3;font-size:1.45rem}.pdf-icon-purple{background:linear-gradient(135deg,#f3edff,#e8ddff);color:#8b63d7;font-size:1.45rem;font-weight:800}.pdf-icon-teal{background:linear-gradient(135deg,#e2f7f3,#d0f0e9);color:#149a8b;font-size:1.35rem;font-weight:800}.pdf-icon-orange{background:linear-gradient(135deg,#fdf1e3,#fbe6cf);color:#d2820f;font-size:1.35rem;font-weight:800}.pdf-resource-grid .contact-detail{font-size:.98rem;color:#096dd9}.pdf-card-desc{margin-top:.35rem;color:var(--vp-c-text-2);font-size:.78rem;line-height:1.6}.pdf-keyword-list{display:flex;flex-wrap:wrap;justify-content:center;gap:.4rem;margin-top:.6rem}.pdf-keyword-list span{padding:.24rem .6rem;border-radius:999px;background:#07c160;color:#fff;font-size:.72rem;font-weight:700;letter-spacing:.02em}.pdf-qrcode-card{margin-bottom:1.5rem}.pdf-timeline strong{color:#096dd9}@media(max-width:480px){.pdf-card-desc{font-size:.72rem}.pdf-resource-grid .contact-detail{font-size:.9rem}}
-</style>

@@ -1,28 +1,94 @@
 ---
-title: Loop Engineering
+title: Loop Engineering 专题导引：如何用循环和反馈修正大模型生成结果
 icon: mdi:refresh
+description: 介绍循环工程的核心思想：通过外部执行、测试与规则反馈驱动大模型逐轮修正结果，并建立熔断与防护机制。
 ---
 
-# Loop Engineering
+![Loop Engineering 知识架构与状态机闭环总览](/images/content-rebuild/19040b8c3166525c/cover.png)
 
-> 让 Agent 一轮一轮走向交付，而不是停在一次回答里。
+在调用大语言模型解决复杂任务时，如果只依赖单次提示词推理，系统很容易因一个小细节错误导致整体交付失败。例如让模型一次性写出包含边界检查、异常处理和业务逻辑的完整算法，即使提示词写得再详尽，生成的代码也可能存在语法拼写错误或漏测极端输入。
 
-Loop Engineering 是围绕 Agent 设计可持续运行的反馈循环。它解决的不是"单轮 Prompt 怎么写"，而是"多轮之间怎么推进"——有目标、有验证、有退出条件的闭环执行。
-
----
-
-### 本篇内容
-
-| 序号 | 文章 |
-|:---:|------|
-| 1 | [Loop Engineering 到底是什么？](/frontier/loop-engineering/Loop_Engineering_到底是什么.html) |
-| 2 | [一个 Loop 由哪些部分组成？](/frontier/loop-engineering/一个_Loop_由哪些部分组成.html) |
-| 3 | [Loop 的灵魂不是执行，而是验证](/frontier/loop-engineering/Loop_的灵魂不是执行_而是验证.html) |
-| 4 | [Loop Engineering 和 Agent 有什么关系？](/frontier/loop-engineering/Loop_Engineering_和_Agent_有什么关系.html) |
-| 5 | [最简单的 Loop：写代码、跑测试、自动修复](/frontier/loop-engineering/最简单的_Loop_写代码_跑测试_自动修复.html) |
-| 6 | [Loop Engineering 在内容创作里怎么用？](/frontier/loop-engineering/Loop_Engineering_在内容创作里怎么用.html) |
-| 7 | [Loop Engineering 的坑：无限循环、烧 Token、越改越差](/frontier/loop-engineering/Loop_Engineering_的坑_无限循环_烧_Token_越改越差.html) |
+**Loop Engineering（循环工程）**是将单次推理改为“生成—运行—检查—修正”的多次迭代程序：
+1. 模型生成初步产物；
+2. 宿主程序调用编译器、单元测试、格式校验器或规则引擎进行客观验证；
+3. 如果验证未通过，把具体报错信息或差量结果重新拼装成提示词，让模型做针对性修改；
+4. 重复这个过程，直到所有测试通过，或者达到预设的步数与预算上限退出。
 
 ---
 
-[← 返回前沿专题](/frontier/)
+## 贯穿案例：一个银行卡号校验函数的自动修复
+
+以编写一个处理银行卡号并按 Luhn 算法校验合法性的 Python 函数为例：
+
+- **单次生成模式**：向模型发送需求。模型给出了代码，但在处理输入包含空格或非数字字符（如 `"4532 0150"`）时直接抛出未捕获的转换异常。如果外部没有运行环境，调用方拿到的就是一段坏代码。
+- **循环工程模式**：
+  1. 宿主程序运行测试用例，捕获到 `ValueError: invalid literal for int() with base 10: ' '`；
+  2. 宿主程序把原代码、失败的测试用例和异常堆栈拼装为反馈：“第 3 个测试用例挂了，输入含有空格，报 ValueError，请只修改数据预处理部分”；
+  3. 模型根据明确的报错信息快速补上 `.replace(" ", "")`，进入下一轮测试；
+  4. 所有测试通过，程序输出最终代码。
+
+![开环生成与闭环控制系统对比](/images/content-rebuild/19040b8c3166525c/fig-1.png)
+
+从单次生成走向循环迭代，核心区别在于**把外部环境的客观运行结果作为新的提示词输入**。然而循环并不能凭空提高模型的上限：如果外部验证器本身检查不全面，或者把错误的反馈喂给模型，循环不仅无法改进产物，还可能让模型在错误的方向上反复修改，徒增成本。
+
+关于模型评估指标与断言设计的更多底层背景，可参阅 [/fundamentals/evaluation-metrics/README.md](/fundamentals/evaluation-metrics/README.md)。
+
+---
+
+## 专题目录与篇章导览
+
+本专题共分为七篇，覆盖基础定义、核心组件、验证逻辑、边界辨析、两种典型场景实践以及防御策略：
+
+| 序号 | 篇章名称 | 核心研究问题 | 路由链接 |
+| :--- | :--- | :--- | :--- |
+| 01 | **Loop Engineering 到底是什么？** | 剖析单向提示词与带反馈循环的运行机制差异，梳理状态流转逻辑。 | [/frontier/loop-engineering/Loop_Engineering_到底是什么.md](/frontier/loop-engineering/Loop_Engineering_到底是什么.md) |
+| 02 | **一个 Loop 由哪些部分组成？** | 拆解输入目标、生成执行、环境观察、反馈裁决四个基础模块与数据交互。 | [/frontier/loop-engineering/一个_Loop_由哪些部分组成.md](/frontier/loop-engineering/一个_Loop_由哪些部分组成.md) |
+| 03 | **Loop 的灵魂不是执行，而是验证** | 分析验证器质量如何决定循环上限，详解测试断言、规则检查与评估器设计。 | [/frontier/loop-engineering/Loop_的灵魂不是执行_而是验证.md](/frontier/loop-engineering/Loop_的灵魂不是执行_而是验证.md) |
+| 04 | **Loop Engineering 和 Agent 有什么关系？** | 厘清固定流程的循环重试与自主选择工具的智能体之间的架构异同。 | [/frontier/loop-engineering/Loop_Engineering_和_Agent_有什么关系.md](/frontier/loop-engineering/Loop_Engineering_和_Agent_有什么关系.md) |
+| 05 | **最简单的 Loop：写代码、跑测试、自动修复** | 基于单测沙箱与堆栈反馈，剖析强确定性场景下的自动化修复闭环。 | [/frontier/loop-engineering/最简单的_Loop_写代码_跑测试_自动修复.md](/frontier/loop-engineering/最简单的_Loop_写代码_跑测试_自动修复.md) |
+| 06 | **Loop Engineering 在内容创作里怎么用？** | 拆解弱确定性文本场景中的多规则质检、结构收敛与早停策略。 | [/frontier/loop-engineering/Loop_Engineering_在内容创作里怎么用.md](/frontier/loop-engineering/Loop_Engineering_在内容创作里怎么用.md) |
+| 07 | **Loop Engineering 的坑：无限循环、烧 Token、越改越差** | 分析逻辑回归、状态震荡与上下文膨胀问题，建立超时、预算与状态熔断机制。 | [/frontier/loop-engineering/Loop_Engineering_的坑_无限循环_烧_Token_越改越差.md](/frontier/loop-engineering/Loop_Engineering_的坑_无限循环_烧_Token_越改越差.md) |
+
+---
+
+## 推荐学习路径
+
+闭环系统的搭建涉及外部调度程序与大模型推理特性的配合。建议按照以下四个阶段阅读：
+
+![专题学习路径四阶段拓扑图](/images/content-rebuild/19040b8c3166525c/fig-2.png)
+
+1. **第一阶段：控制机制建立（第 1、2 篇）**
+   理解为什么外层宿主程序必须保存历史状态快照，掌握调度器如何把验证结果转化为下一次提示词。系统架构设计的整体思路可参考 [/architecture/README.md](/architecture/README.md)。
+2. **第二阶段：验证中枢与架构边界（第 3、4 篇）**
+   理解验证器（Verifier）必须独立于生成器。理清带固定退出条件的循环与自主代理（Agent）的职责区别。
+3. **第三阶段：双轨实战验证（第 5、6 篇）**
+   对比客观布尔断言（代码测试）与主观规则打分（文本编辑）两类场景，分析环境反馈如何组织成对模型有用的修改指令。
+4. **第四阶段：异常防御与生产落地（第 7 篇）**
+   设置最大尝试轮数、Token 预算限额、上下文修剪与状态去重，防止系统陷入无限空转或修改后指标退化。模型本身的推理基础机制可参考 [/fundamentals/llm-basics/README.md](/fundamentals/llm-basics/README.md)。
+
+---
+
+## 两种典型验证场景对比
+
+根据外部反馈的确定性强弱，循环工程通常分为两类不同应用形态：
+
+![强确定性代码自愈与弱确定性文本迭代机制对比](/images/content-rebuild/19040b8c3166525c/fig-3.png)
+
+### 1. 强确定性场景：代码编写与修复
+- **输入**：功能需求、已有代码、单元测试集。
+- **验证机制**：在沙箱环境中直接运行测试。依靠退出状态码（0 表示成功）、断言错误行和异常堆栈给出判定。
+- **收敛特征**：反馈信号噪音低、定位清晰。但需要注意**逻辑回归**：模型修复了用例 A，可能无意中破坏了原本通过的用例 B，导致通过率上下波动，并不必然单调递增。因此宿主程序在每次修改后必须跑全量测试，并在出现退化时保留回滚能力。
+
+### 2. 弱确定性场景：长文写作与结构润色
+- **输入**：写作大纲、内容规范、格式与字数要求。
+- **验证机制**：硬性规则校验（如敏感词正则、字数统计、Markdown 层级解析）+ 评分模型检查（如用辅助小模型检查事实一致性与逻辑连贯性）。
+- **收敛特征**：反馈信号包含一定的主观性和概率随机性。若未设置合理的容忍阈值和早停条件，模型容易在两个互斥的修改要求之间来回拉扯，出现反复修改却无实际改善的震荡现象。
+
+---
+
+## 阶段学习目标
+
+学完本专题后，读者应能够独立完成以下工作：
+1. **设计宿主调度流程**：为实际业务定义清晰的状态输入、模型动作和检查步骤，能将外部环境报错整理成高质量的下一步提示词；
+2. **独立搭建验证器**：根据任务类型选择断言沙箱、规则引擎或评判模型，不把生成与自评混杂在同一个没有外部检验的黑盒里；
+3. **实现工程兜底防护**：在宿主代码中加入最大步数、超时断流、Token 消耗预算限制和历史版本比对，确保程序在模型产生幻觉或反复报错时能安全退出并告警。

@@ -1,252 +1,226 @@
 ---
-title: "Masked Language Model 和 Causal Language Model 有什么区别？"
+title: MLM 与 CLM 有什么区别？为什么主流大模型多采用因果架构？
 icon: mdi:tune-vertical
 tag:
-  - 训练原理
-  - 大模型100讲
-  - 预训练
+- 训练原理
+- 大模型100讲
+- 预训练
+description: 对比掩码语言模型与因果语言模型的信息可见性、损失密度与生成机制，解释大模型转向单向因果架构的技术原因与工程边界。
 ---
 
-# Masked Language Model 和 Causal Language Model 有什么区别？
-
-> 一句话核心：MLM（遮蔽语言模型）双向预测缺失词，适合理解任务；CLM（因果语言模型）单向预测下一个词，适合生成任务。两者是预训练语言模型的两种核心范式，分别对应 BERT（编码器）和 GPT（解码器）架构。
-
-## 核心概念（术语表）
-- **Masked Language Model (MLM)**：用 [MASK] 替换输入中 15% 的词，双向预测缺失词。用途：预训练理解型模型，如 BERT、RoBERTa。
-- **Causal Language Model (CLM)**：只基于前文预测下一个词，单向自回归生成。用途：文本生成任务，如 GPT 系列、LLaMA。
-- **Self-Attention（自注意力）**：计算序列内每对词之间的依赖关系。MLM 用双向注意力，CLM 用因果（单向）注意力。
-- **Positional Encoding（位置编码）**：为每个 token 添加位置信息，使模型理解词序。BERT 和 GPT 都使用，但 MLM 用双向上下文，CLM 只用前文。
-- **Bidirectional Encoder（双向编码器）**：MLM 特有的架构，能同时看到 [MASK] 前后的词。代表：BERT 的 Transformer Encoder。
-- **Causal Decoder（因果解码器）**：CLM 特有的解码器结构，预测下一个词时只能看到之前的词。代表：GPT 的 Transformer Decoder。
-- **Next-Word Prediction（下一个词预测）**：CLM 的训练目标，基于前文预测下一个 token。
-- **Tokenization（分词）**：将文本拆分为 token（词、子词或字符）。两种模型都需此步骤。
-
-
-<ReadMoreLock />## 历史背景 / 来源
-- **MLM 起源**：2018 年 Google 的 Devlin 等人提出 BERT，同时引入 MLM 作为预训练目标。论文《BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding》。
-- **CLM 起源**：GPT-1 于 2018 年由 OpenAI 提出，采用因果语言模型训练。GPT-2（2019）、GPT-3（2020）延续此范式。
-- **核心突破**：BERT 在 GLUE 基准上刷新 11 项记录，证明 MLM 预训练+微调范式优于传统方法。GPT 系列则展示了 scaling law 下的涌现能力。
-
-## 工作原理 / 核心机制
-
-### 整体思路（一句话）
-MLM 通过双向上下文预测被遮蔽的词，理解语义；CLM 通过自回归方式基于前文生成下一个词，完成文本生成。
-
-### MLM 工作流程
-
-**第一步：数据预处理与 Mask 操作**
-- 输入：原始文本 "The weather is sunny today"
-- 处理：随机替换 15% 的词为 [MASK] token（WordPiece 分词后）
-- 输出："The weather is [MASK] today"（假设 sunny 被 mask）
-
-**第二步：双向嵌入生成**
-- 输入：每个 token 生成词嵌入 + 位置编码
-- 处理：Transformer Encoder 计算双向自注意力，每个 [MASK] 位置的表示融合了前后文信息
-- 输出：每个 [MASK] 位置得到上下文相关的向量表示
-
-**第三步：概率分布预测**
-- 输入：[MASK] 位置的向量表示
-- 处理：全连接层 + Softmax，输出词表上每个词的概率
-- 输出：P(sunny|[MASK]) = 0.92，P(cloudy) = 0.05，P(其他) = 0.03
-
-### CLM 工作流程
-
-**第一步：Tokenization（分词）**
-- 输入：原始文本 "The weather is"
-- 处理：分词为 ["The", "weather", "is"]
-- 输出：token IDs [464, 3290, 318]
-
-**第二步：因果注意力计算**
-- 输入：所有 token 的嵌入
-- 处理：因果掩码（causal mask）确保每个位置只能看到之前的词
-- 输出：每个位置的表示只包含前文信息
-
-**第三步：Next-Word Prediction（下一个词预测）**
-- 输入："The weather is"
-- 处理：预测下一个词的概率分布
-- 输出：P(sunny|[The, weather, is]) = 0.85
-- 迭代：将预测结果加入输入，重复生成下一个词
-- 最终输出："The weather is sunny today"
-
-## 关键知识点
-
-1. **MLM 通常 mask 15% 的词**：BERT 论文设定，mask 比例过高会丢失太多上下文，过低则训练信号不足。
-2. **CLM 是自回归生成**：每个词的生成依赖之前所有词，训练和推理时计算方式一致。
-3. **BERT 是 Encoder-only**：双向架构，能同时看到 [MASK] 左右两侧的词。
-4. **GPT 是 Decoder-only**：单向架构，训练时用 teacher forcing，推理时自回归生成。
-5. **MLM 支持双向推理**：给定完整句子填缺词，适合阅读理解、文本分类等理解任务。
-6. **CLM 支持文本生成**：从起始 prompt 一直生成到 EOS token，适合对话、写作、代码生成。
-7. **位置编码的差异**：MLM 和 CLM 都用位置编码，但 CLM 的因果掩码限制注意力范围。
-8. **BERT 预训练两个任务**：MLM + Next Sentence Prediction (NSP)。GPT 只做 CLM。
-9. **RoBERTa 改进了 MLM**：去掉 NSP，动态 mask，更大数据量和训练时间，性能超越 BERT。
-10. **GPT 系列 scaling**：GPT-3 1750 亿参数，in-context learning 能力涌现。
-11. **LLaMA 的改进**：Meta 开源的 LLaMA，用更少参数达到 GPT-3 水平，推动开源社区发展。
-12. **推理效率对比**：CLM 自回归生成 O(n) 步，MLM 只需 O(1) 步（前向传播）。
-13. **训练数据利用效率**：MLM 每个 token 都参与损失计算，CLM 只计算下一个词。
-14. **注意力复杂度**：标准自注意力 O(n²)，FlashAttention 等优化将复杂度降至 O(n)。
-15. **两者的互补性**：BERT（MLM）擅长理解，GPT（CLM）擅长生成，实际系统常组合使用。
-
-## 应用场景
-
-- **场景 1**：Google 搜索用 BERT 理解查询意图，MLM 预训练的 BERT 替换了旧排序模型，提升了 10% 的搜索相关性准确率。
-- **场景 2**：OpenAI ChatGPT 用 GPT-3.5/4（CLM）实现多轮对话，1750 亿参数模型生成连贯长文本，支持代码编写、数学推理。
-- **场景 3**：GitHub Copilot 用 CLM 代码生成，在 VS Code 中实时补全代码，开发者效率提升约 55%（微软内部数据）。
-- **场景 4**：Facebook 翻译系统用 BERT（MLM）做 encoder，提升翻译质量，尤其在低资源语言对上表现突出。
-- **场景 5**：智能客服用 CLM 生成回复，MLM 做意图分类，两者协同：MLM 理解用户问题类型，CLM 生成具体回复。
-
-## 常见误区 / 踩坑
-
-- ❌ **误区 1**：认为 MLM 生成的文本比 CLM 更准确
-  ✅ **正解**：MLM 不擅长生成，它的设计目标是"填词"而非"造句"。生成任务必须用 CLM。
-
-- ❌ **误区 2**：认为 CLM 训练比 MLM 简单
-  ✅ **正解**：CLM 需要自回归生成，训练时梯度不稳定（teacher forcing vs 自回归），推理时错误累积问题。
-
-- ❌ **误区 3**：认为 BERT 不能做生成
-  ✅ **正解**：BERT 可以通过 mask-predict 策略做生成（如 BERT4Seq2Seq），但效率低于 CLM，不适合大规模生成。
-
-- ❌ **误区 4**：混淆 mask 比例
-  ✅ **正解**：BERT 默认 15% mask（其中 80% 替换为 [MASK]，10% 随机替换，10% 不变）。这个比例经过消融实验确定。
+掩码语言模型（Masked Language Model，简称 MLM，以 BERT 为代表）与因果语言模型（Causal Language Model，简称 CLM，以 GPT 系列为代表）的核心区别可以先用一句话概括：
 
-- ❌ **误区 5**：认为双向注意力一定优于单向
-  ✅ **正解**：对于生成任务，双向注意力会导致"信息泄露"（看到未来词），必须用因果掩码。
+* **MLM 是双向完形填空**：把输入句子中间的部分词遮挡起来，允许模型同时查看被遮挡词的左侧和右侧全部上下文，去猜测被遮挡的词；
+* **CLM 是单向接龙续写**：严格遮挡未来所有词，模型在任意位置只能看到自己左侧的历史词，去预测紧接着出现的下一个词。
 
-- ❌ **误区 6**：忽视推理效率差异
-  ✅ **正解**：MLM 对整个句子只需一次前向传播，CLM 生成 n 个词需要 n 次前向传播，长文本生成成本高。
+以句子 `今天 天气 真好 ， 我们 去 公园 散步 吧` 为例：
+* MLM 可能会把 `天气` 替换为 `[MASK]`，模型同时依靠左侧的 `今天` 和右侧的 `真好，我们去公园散步吧` 来推断被遮盖的词；
+* CLM 在读到 `今天 天气 真好 ， 我们 去` 时，右侧所有词全部不可见，模型的任务就是预测下一个词是 `公园`。
 
-## 性能 / 复杂度
+表面上看，MLM 能够同时看前看后，获取的上下文信息更完整；但为什么参数规模扩大后，通用的主流大模型（如 GPT-4、LLaMA、Mistral）几乎全部转向了单向的 CLM 架构？
 
-- **时间复杂度**：
-  - MLM：O(n × d × h)，n=序列长度，d=层数，h=隐藏维度。一次前向传播。
-  - CLM 推理：O(n² × d × h)（生成 n 个词，每次 O(n) 注意力）。
-  - 适用边界：生成超过 50 个词时，CLM 推理时间显著长于 MLM。
+这并非单向注意力在表征质量上全面胜过双向，而是由自回归生成形式、监督信号利用效率、以及上下文学习（In-Context Learning）的匹配度共同决定的。
 
-- **空间复杂度**：
-  - MLM：O(n × h) 保存激活值。
-  - CLM：额外需要保存 causal mask 和 past key-value 缓存。
-  - 适用边界：长序列（n>2048）时，CLM 显存需求约为 MLM 的 2-3 倍。
+![掩码语言模型与因果语言模型的预训练结构与注意力可见性对比](/images/content-rebuild/4f85e0c5a5691d93/cover.png)
 
-- **与替代方案对比**：
-  - 方案 A：传统 RNN/LSTM，O(n × h) 时间，无法捕捉长距离依赖（梯度消失）。
-  - 方案 B：Transformer Encoder (MLM)，O(n²) 注意力，全局感受野，适合理解。
-  - 方案 C：Transformer Decoder (CLM)，O(n²) 注意力 + O(n) 步生成，适合生成。
-  - 临界点：任务类型决定选择，理解任务选 MLM，生成任务选 CLM。
+---
 
-- **性能数字**：
-  - BERT-base：1.1 亿参数，GLUE 基准 82.1 分。
-  - GPT-3：1750 亿参数，in-context learning 在 100+ 任务上达到 SOTA。
-  - LLaMA-7B：用 7B 参数达到 GPT-3 水平，训练数据 1T tokens。
+### 掩码语言模型（MLM）：双向上下文与局部遮盖恢复
 
-## 与相关概念的区别
+MLM 的预训练目标是恢复被随机遮盖的标记（Token）。
 
-- **vs LSTM/RNN**：
-  - 维度 1（并行化）：LSTM 训练慢（时序展开），Transformer 可并行。
-  - 维度 2（长距离依赖）：LSTM 梯度消失，Transformer 全局注意力。
-  - 维度 3（适用）：LSTM 适合小数据，Transformer 适合大数据。
-  - 怎么选：小数据集（<10K）选 LSTM，大规模预训练选 Transformer。
+假设输入文本序列由离散标记组成：$X = (x_1, x_2, \dots, x_T)$。MLM 在训练时随机选择序列中一部分下标集合 $M$ 进行遮盖，得到带遮挡的序列 $\tilde{X}$。模型的目标是在给定完整双向上下文的前提下，最小化被遮盖位置真实标记的负对数似然：
 
-- **vs Seq2Seq（Encoder-Decoder）**：
-  - 维度 1（架构）：Seq2Seq 有 encoder 和 decoder 分离，MLM/CLM 只有 encoder 或 decoder。
-  - 维度 2（任务）：Seq2Seq 适合翻译（输入→输出），MLM/CLM 是预训练范式。
-  - 维度 3（代表模型）：T5 是 Encoder-Decoder 架构，可做 MLM 也可做 CLM-style 生成。
-  - 怎么选：翻译任务选 Seq2Seq，理解任务选 MLM，生成任务选 CLM。
+$$\mathcal{L}_{\text{MLM}}(\theta) = - \sum_{i \in M} \log P_\theta(x_i \mid \tilde{X})$$
 
-- **vs Prefix LM（前缀语言模型）**：
-  - 维度 1（注意力）：Prefix LM 对 prefix 部分用双向注意力，生成部分用因果注意力。
-  - 维度 2（灵活性）：Prefix LM 比 CLM 更灵活，可处理 prefix 理解+后续生成。
-  - 维度 3（代表）：UniLM、GLM 采用此架构。
-  - 怎么选：需要 prefix 理解的生成任务选 Prefix LM，纯生成选 CLM。
+在 BERT 的标准实现中，集合 $M$ 的大小通常占整个序列长度的 15%。如果把这 15% 的词全都替换成特殊的 `[MASK]` 标记，下游微调或使用时输入里并没有 `[MASK]`，就会产生训练与实际使用输入分布不一致的问题。为此，BERT 采用了如下策略：
 
-## 进阶 / 面试加分项
+1. **80% 的概率**：真正替换成特殊标记 `[MASK]`；
+2. **10% 的概率**：替换成词表里的一个随机词（迫使模型不能只靠标记形状作弊，必须依赖上下文语义）；
+3. **10% 的概率**：保留原词不变，但依然计算该位置的预测损失（强迫模型在不确定当前词是否正确时依然做表征检查）。
 
-- **最新进展**：ChatGPT 背后的 RLHF（人类反馈强化学习）将 CLM 与强化学习结合，通过 reward model 优化生成质量。LLaMA 2 进一步引入 RLHF，在有用性和安全性上显著提升。
-- **业界争议/未解问题**：
-  1. CLM 的 scaling law 是否会见顶？GPT-4 的架构细节未公开，社区猜测可能用了 mixture of experts (MoE)。
-  2. MLM 和 CLM 的统一：UL2、GLM 等模型试图用一个模型同时做 MLM 和 CLM，但效果尚未全面超越专用模型。
-  3. 效率优化：Linear Attention、State Space Models（如 Mamba）尝试将 O(n²) 复杂度降至 O(n)，可能颠覆现有架构。
-- **一句话送给候选人**：MLM 学"读"，CLM 学"写"，理解两者差异就像理解语文的阅读理解和作文——面试中考的是你能否根据任务选对模型，而不是死记硬背架构细节。
+![掩码语言模型的数据遮盖与全向注意力图谱](/images/content-rebuild/4f85e0c5a5691d93/fig-1.png)
 
-## 附录：代表性模型一览
+从注意力计算矩阵来看，MLM 的自注意力权重矩阵中，除了填充（Padding）位置会被遮挡外，任意位置 $i$ 都可以与序列中的任意位置 $j$ 计算相关性，形成全向可见的连接。
 
-| 模型 | 架构 | 预训练目标 | 参数规模 | 推出时间 | 推出机构 |
-|------|------|------------|----------|----------|----------|
-| BERT | Encoder-only | MLM + NSP | 340M (base) / 1.1B (large) | 2018 | Google |
-| GPT-1 | Decoder-only | CLM | 117M | 2018 | OpenAI |
-| GPT-2 | Decoder-only | CLM | 1.5B | 2019 | OpenAI |
-| GPT-3 | Decoder-only | CLM | 175B | 2020 | OpenAI |
-| RoBERTa | Encoder-only | MLM (动态) | 355M | 2019 | Facebook |
-| LLaMA | Decoder-only | CLM | 7B-65B | 2023 | Meta |
-| LLaMA 2 | Decoder-only | CLM + RLHF | 7B-70B | 2023 | Meta |
+但从训练监督密度的角度来看，在整整 $T$ 个标记的序列中，只有被抽中的约 15% 位置会计算交叉熵损失。其余 85% 的词虽然经过了深层注意力计算，但在当前训练步中仅充当输入特征，并不直接输出损失梯度。
 
-## 核心对比速查表
+---
 
-| 维度 | MLM (BERT) | CLM (GPT) |
-|------|------------|-----------|
-| 注意力方向 | 双向 | 单向（因果） |
-| 架构 | Encoder | Decoder |
-| 训练目标 | 预测 [MASK] | 预测下一个词 |
-| 适合任务 | 理解（分类、NER、QA） | 生成（对话、写作、代码） |
-| 推理次数 | 1 次前向传播 | n 次前向传播 |
-| 代表模型 | BERT, RoBERTa, ELECTRA | GPT, LLaMA, PaLM |
-| 参数效率 | 较高（理解任务） | 较低（生成需要更多参数） |
-| 上下文利用 | 全部可见 | 仅前文可见 |
+### 因果语言模型（CLM）：单向因果掩码与下一词预测
 
+因果语言模型建立在概率论的乘法公式（链式法则）之上。一个文本序列 $X = (x_1, x_2, \dots, x_T)$ 的联合概率可以精确展开为单向条件概率的连乘：
 
-## 面试如何回答
+$$P(X) = \prod_{t=1}^T P(x_t \mid x_1, x_2, \dots, x_{t-1}) = \prod_{t=1}^T P(x_t \mid x_{<t})$$
 
+CLM 的训练目标是通过已知前文预测当前词：
 
-### 🟢 请用一句话解释 Masked Language Model 和 Causal Language Model 的核心区别
+$$\mathcal{L}_{\text{CLM}}(\theta) = - \sum_{t=1}^T \log P_\theta(x_t \mid x_{<t})$$
 
-**回答要点**：
+在标准 Transformer 架构中，为了能够一次性并行计算整个序列的损失，CLM 在自注意力计算中加入了一个下三角矩阵作为因果掩码（Causal Mask）。
 
-MLM（遮蔽语言模型）用双向注意力预测句子中被 [MASK] 掉的词，适合理解任务；CLM（因果语言模型）用单向自回归方式基于前文预测下一个词，适合生成任务。两者核心区别在于：MLM "读" 完整句子填缺词，CLM "写" 从头造句。具体来说，BERT 用 MLM 预训练，预测被 mask 的 "sunny" 时能看到 "The weather is [MASK] today" 的完整上下文；而 GPT 用 CLM 预训练，预测 "sunny" 时只能看到 "The weather is"，看不到后面的 "today"。这种差异决定了 BERT 适合文本分类、问答等理解任务，GPT 适合对话、写作等生成任务。面试官想听到的是你能根据任务类型选择合适的模型，而不是死记硬背架构。
+对于长度为 $T$ 的序列，当模型计算位置 $i$ 的隐藏状态时，只能对位置 $j \le i$ 的键（Key）和值（Value）计算注意力。所有未来位置 $j > i$ 对应的注意力得分会被加上一个极大的负数（如 $-10000$ 或 $-\infty$），经过 Softmax 之后，未来位置的权重严格变为 0。
 
+<ReadMoreLock />
 
-### 🟡 为什么 Causal Language Model 不能看到未来的词？具体是怎么实现的？
+![因果语言模型的下三角注意力掩码与时序位移损失机制](/images/content-rebuild/4f85e0c5a5691d93/fig-2.png)
 
-**回答要点**：
+这种机制带来了一个直接的训练收益：**全序列监督密度**。
 
-CLM 不能看未来词是为了避免"信息泄露"，确保训练和推理行为一致。实现方式是在自注意力层加入 causal mask（因果掩码）。具体来说，对于位置 i 的词，注意力分数只计算与位置 ≤ i 的词的内积，位置 > i 的词被设为负无穷，经过 Softmax 后概率为 0。例如预测 "sunny" 时（第 4 个位置），注意力只能聚焦在 "The"、"weather"、"is" 三个词上，看不到 "today"。这种设计还带来另一个好处：训练时可以用 teacher forcing 加速收敛（直接拿真实前文预测），推理时则自回归逐步生成。面试官追问实现细节时，可以画出 causal mask 的矩阵图：下三角为 0，上三角为 -∞。这是 GPT、BART decoder、LLaMA 等生成模型的标配。
+在预训练时，整个序列一次性送入模型。通过把模型输出的预测未归一化对数概率（Logits）向右切片一位，与向左切片一位的标签对齐，从第 1 个位置到第 $T-1$ 个位置，每一个位置都在预测其下一个词。除最后一个词没有后续标签外，全序列约 $100\%$ 的位置都在贡献交叉熵损失。相比 MLM 单次训练步只有 15% 的有效标签，CLM 单步训练获取的梯度监督信号密度明显更高。
 
+---
 
-### 🟡 MLM 的 15% mask 比例是怎么确定的？BERT 还用了哪些训练技巧？
+### 为什么生成任务天然偏向 CLM？
 
-**回答要点**：
+如果只看判别类任务（如情感分类、句子匹配、抽取实体），双向注意力的 MLM 表现通常非常扎实；但在自由文本生成场景下，MLM 遇到两个根本障碍：
 
-BERT 默认 mask 15% 的词，这个比例是经过消融实验确定的：比例过低（如 5%）训练信号太弱，模型学不到足够的上下文表示；比例过高（如 50%）则丢失太多原始句子信息，预测难度过大。BERT 还用了两个训练技巧：1）Next Sentence Prediction (NSP)：额外增加一个二分类任务，让模型学习句子间关系，帮助问答、自然语言推理等任务。2）动态 Mask：RoBERTa 发现每次 epoch 用不同的 mask 位置比固定 mask 效果更好，所以去掉了 NSP，增加了训练数据量和步数，最终在多项基准上超越 BERT。实际面试中，能说出 15% 这个数字和背后的 trade-off 已经足够，如果能补充 RoBERTa 的改进则体现你对前沿工作的关注。
+#### 1. 独立性假设断裂
+MLM 假定被遮盖的各个标记在给定未遮盖文本后是相互独立的：
 
+$$P(x_i, x_j \mid \tilde{X}) \approx P(x_i \mid \tilde{X}) P(x_j \mid \tilde{X})$$
 
-### 🟡 一个客服机器人需要同时做用户意图分类和生成回复，应该如何设计模型架构？
+如果让 MLM 同时预测两个相邻位置 `[MASK] [MASK]`，比如在句子 `这只猫正在 [MASK] [MASK]` 中，模型分别挑选第一空最可能的词（如 `睡觉`）和第二空最可能的词（如 `奔跑`），就可能组合出 `睡觉 奔跑` 这种互斥的短语。它缺乏“第 1 个位置生成了什么、紧接着决定第 2 个位置”的时序条件依赖。
 
-**回答要点**：
+#### 2. 自由生成的迭代成本与长度失配
+文本生成通常无法在事前确定输出会有多少个字。
+* CLM 的推理流程与预训练目标严格同构：输入前缀，采样出下一个词；把新词追加到末尾，继续预测再下一个词，直到采样出终止符（EOS）。
+* MLM 缺乏单向推演逻辑。若要让 MLM 续写长文本，通常需要先强行预留固定数量的 `[MASK]`，然后通过多轮迭代前向传播（如 Gibbs 采样式反复刷新最可信的位置）。不仅每次生成几个词就要反复跑完整张网络，而且未生成的 `[MASK]` 占位符本身就会严重干扰双向注意力的语义理解。
 
-最佳方案是 MLM+CLM 组合使用。意图分类是理解任务，适合用 MLM（如 BERT）；回复生成是生成任务，适合用 CLM（如 GPT）。具体架构设计：第一步，用 BERT encoder 编码用户输入，通过 [CLS] token 的表示做意图分类（多分类softmax），这一步只需一次前向传播。第二步，将意图标签和用户输入拼接作为 prompt，用 GPT decoder 自回归生成回复。这样做的好处是：两个任务解耦，模型独立优化，意图分类准确率高（BERT 在此任务上通常 >95%），生成回复质量也好（GPT 4B 参数通常优于 1B）。如果资源有限，可以用 prefix LM（如 UniLM）在单一模型中兼顾两种能力，但效果通常不如组合。面试官想看到的是你理解任务类型决定模型选择，而不是盲目追求大模型。
+![两种模型在自由文本生成过程中的推演机制与依赖关系](/images/content-rebuild/4f85e0c5a5691d93/fig-3.png)
 
+---
 
-### 🔴 CLM 生成 100 个词需要多少次前向传播？为什么说它的推理效率低？
+### 提示词（Prompt）与上下文学习对因果架构的选择推动
 
-**回答要点**：
+现代大模型的使用方式，从早期的“预训练 + 针对特定任务微调网络头”，转变为“纯文本提示输入 + 上下文学习（In-Context Learning）”。这种使用范式的转变，是因果模型胜出的关键因素。
 
-CLM 生成 100 个词需要 100 次前向传播，因为每个词都是自回归生成的：先生成第 1 个词，再用前 2 个词预测第 2 个词，以此类推。相比之下，MLM 对整个句子只需 1 次前向传播就能预测所有 [MASK] 位置。这就是为什么 BERT 推理快（O(1) 步），GPT 推理慢（O(n) 步）。长文本生成时这个差距非常显著，例如生成 1000 词的文章，CLM 需要 1000 次前向传播，MLM 只需 1 次。业界常用 KV cache 优化：保存已计算的 key-value 矩阵，避免重复计算，但仍需 n 次解码步骤。另一个优化方向是 speculative decoding：用小模型快速生成 draft，大模型验证，加速 2-3 倍。面试时能说出具体的计算次数和优化方向，体现你对工程实践的理解。
+在 MLM 架构中，如果想让它做情感分析，必须把任务改装成完形填空槽：
+```text
+输入：这部电影真不错。 评价：[MASK]
+```
+并且必须提前限定 `[MASK]` 只能映射回特定单个词（如“好”或“差”）。如果用户要求它写一段包含分析过程的回答，或者做复杂的思维链（Chain of Thought）推导，固定槽位的方法便无法承载动态长度的展开。
 
+![上下文学习在因果模型与掩码模型中的映射结构差异](/images/content-rebuild/4f85e0c5a5691d93/fig-4.png)
 
-### 🟡 MLM 和 CLM 在预训练数据利用效率上有什么区别？哪个更好？
+因果语言模型把“输入说明”和“输出结果”统一在同一个单向时间轴上：
 
-**回答要点**：
+$$\text{输入序列} = (\underbrace{x_1, x_2, \dots, x_k}_{\text{Prompt: 角色、少样本示例、问题}}, \quad \underbrace{x_{k+1}, x_{k+2}, \dots, x_T}_{\text{Completion: 自回归生成的推理与答案}})$$
 
-MLM 训练时所有 token 都参与损失计算，每个被 mask 的词都有监督信号；CLM 训练时只有下一个词参与损失，前面的词没有直接的监督。粗略估计，MLM 的数据利用效率是 CLM 的 2-3 倍（取决于序列长度）。但这不是绝对的：CLM 虽然只预测下一个词，但每个词都会作为下一个词的输入进行训练，实际上所有词的表示都在优化。BERT 的 MLM 还有一个 80/10/10 的技巧：80% 替换为 [MASK]，10% 随机替换，10% 保持不变，这增加了训练难度但避免了预训练和微调的不一致。实际选择要看任务：理解任务用 MLM 数据效率高，生成任务只能用 CLM。面试官追问时，可以补充 ELECTRA 的替换 token 检测 (Replaced Token Detection) 比 MLM 更数据高效。
+在模型眼里，不需要区分哪些词是输入、哪些词是输出，统一按照条件概率分布 $P(x_t \mid x_{<t})$ 往后采样。无论是写代码、做多轮对话、还是跨步推理，模型只需按需向后吐字。模型结构摆脱了下游专用分类头（Classification Head）的绑定，实现了真正的通用调用接口。
 
+---
 
-### 🟡 Prefix LM 和 Causal LM 有什么区别？什么时候应该用 Prefix LM？
+### 代码实验：同一序列下的损失与梯度覆盖对比
 
-**回答要点**：
+通过一段简明的 PyTorch 实验，可以在完全相同的输入序列上，直接观察 CLM 与 MLM 在张量切片、损失计算以及反向梯度产生范围上的本质不同。
 
-Prefix LM（前缀语言模型）的注意力机制是混合的：对用户输入的 prefix 部分用双向注意力（像 MLM），对模型生成的 part 用因果注意力（像 CLM）。典型代表是 UniLM、GLM。举例来说，用户输入 "请帮我写一封请假邮件，内容是"，这部分用双向注意力充分理解；模型生成 "尊敬的领导：..." 时用因果注意力避免信息泄露。这种设计的好处是：既能在 prefix 上充分利用上下文，又能在生成时保持一致性。适用场景包括：需要理解复杂指令的生成任务（如 ChatGPT 的 system prompt）、多轮对话（前面的对话历史用双向注意力，当前回复用因果注意力）。如果纯生成任务且 prefix 简单，直接用 CLM 更高效。面试时能说出前缀注意力和因果注意力的区别，已经超出基础水平。
+代码无需外部数据集，可直接在安装了 PyTorch 的 Python 环境中运行：
 
+```python
+import torch
+import torch.nn.functional as F
 
-### 🔴 如果让你设计一个能同时做理解和生成的模型，你会怎么做？有哪些最新进展？
+# 设定实验参数（数据仅用于机制演示）
+vocab_size = 50
+batch_size = 1
+seq_len = 6
 
-**回答要点**：
+# 假定输入序列对应的离散 Token ID（对应 6 个单词）
+tokens = torch.tensor([[10, 24, 35, 12, 48, 5]], dtype=torch.long)
 
-有三种主流方案。第一种是 Encoder-Decoder 架构（T5、BART），encoder 用 MLM 理解输入，decoder 用 CLM 生成输出，适合 seq2seq 任务（翻译、摘要）。第二种是 Prefix LM（UniLM、GLM），单一模型中混合双向和单向注意力，prefix 部分双向，生成部分单向，更灵活。第三种是混合专家模型（MoE），如 GPT-4 猜测采用 MoE 架构，多个专家网络按需激活，兼顾容量和效率。最新的趋势是将 CLM 与 RLHF 结合（LLaMA 2），通过 reward model 和强化学习优化生成质量，在有用性和安全性上显著提升。面试中能讨论这些前沿方向，体现你对领域发展的持续关注。加分项可以提到 State Space Models（Mamba）等新架构，试图用 O(n) 复杂度颠覆 Transformer。
+# 假定模型输出层前向计算出的未归一化对数概率 Logits (形状: 1, 6, 50)
+torch.manual_seed(42)
+logits = torch.randn(batch_size, seq_len, vocab_size, requires_grad=True)
 
+# =========================================================
+# 1. 因果语言模型 (CLM) 的损失计算：
+# 核心在于错位切片：位置 t 的 Logits 负责预测位置 t+1 的真实词
+# =========================================================
+# logits 去掉最后一位，labels 去掉第 0 位
+shift_logits = logits[:, :-1, :].contiguous().view(-1, vocab_size)
+shift_labels = tokens[:, 1:].contiguous().view(-1)
+
+loss_clm = F.cross_entropy(shift_logits, shift_labels)
+loss_clm.backward(retain_graph=True)
+
+# 统计输入序列中有多少比例的位置产生了非零反向梯度
+clm_grad_mask = (logits.grad != 0).any(dim=-1)
+clm_density = clm_grad_mask.float().mean().item()
+
+print(f"[CLM] 交叉熵损失: {loss_clm.item():.4f}")
+print(f"[CLM] 产生梯度的位置数: {clm_grad_mask.sum().item()} / {seq_len} ({clm_density * 100:.1f}%)")
+
+# 清理梯度以便对比 MLM
+logits.grad.zero_()
+
+# =========================================================
+# 2. 掩码语言模型 (MLM) 的损失计算：
+# 核心在于稀疏索引：只提取被掩码选中的位置计算损失
+# =========================================================
+# 假定序列中第 2 和第 5 位被选中掩码（6 个词中抽中 2 个）
+masked_positions = torch.tensor([[False, False, True, False, False, True]])
+
+mlm_active_logits = logits[masked_positions].view(-1, vocab_size)
+mlm_active_labels = tokens[masked_positions].view(-1)
+
+loss_mlm = F.cross_entropy(mlm_active_logits, mlm_active_labels)
+loss_mlm.backward()
+
+mlm_grad_mask = (logits.grad != 0).any(dim=-1)
+mlm_density = mlm_grad_mask.float().mean().item()
+
+print(f"[MLM] 交叉熵损失: {loss_mlm.item():.4f}")
+print(f"[MLM] 产生梯度的位置数: {mlm_grad_mask.sum().item()} / {seq_len} ({mlm_density * 100:.1f}%)")
+```
+
+![代码实验中张量位移切片与掩码索引损失的计算流向对比](/images/content-rebuild/4f85e0c5a5691d93/fig-5.png)
+
+运行上述代码输出：
+```text
+[CLM] 交叉熵损失: 4.0931
+[CLM] 产生梯度的位置数: 5 / 6 (83.3%)
+[MLM] 交叉熵损失: 4.2863
+[MLM] 产生梯度的位置数: 2 / 6 (33.3%)
+```
+
+* 在 **CLM** 中，前 $T-1$ 个位置全部接入了下一词预测，直接对模型的输出层贡献了监督损失；
+* 在 **MLM** 中，只有被掩码抽中的位置参与计算。在工业标准中这一比例约为 15%，意味着序列中 85% 的词在反向传播中没有来自输出层预测损失的直接梯度拉动。关于损失函数与梯度回传的更多细节，可参考 [/llm-100/training/loss-calculation.md](/llm-100/training/loss-calculation.md)。
+
+---
+
+### 常见模型架构与工程选型边界
+
+依据注意力可见性与训练目标的不同，Transformer 分化出了三类典型拓扑结构。在工程实践中，必须按任务需求选择，而不是所有业务场景都盲目上马千亿参数的自回归大模型。
+
+| 架构类别 | 预训练目标代表 | 注意力可见性 | 优势场景 | 局限场景 | 代表模型 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **仅编码器 (Encoder-only)** | MLM（双向掩码恢复） | 全局双向注意力 | 语义向量抽取（Embedding）、语义相似度、文本分类、序列标注（NER） | 难以进行长篇开放文本生成 | BERT, RoBERTa, BGE-large |
+| **仅解码器 (Decoder-only)** | CLM（自回归下一词预测） | 严格下三角单向因果掩码 | 自由问答、多轮对话、代码编写、复杂推理、通用指令遵循 | 表征向量受单向视野限制，直接取末尾向量做语义检索通常弱于双向专门微调模型 | GPT-4, LLaMA, Mistral, Qwen |
+| **编码器-解码器 (Encoder-Decoder)** | 混合目标（Span Corruption 等） | 编码端双向，解码端单向因果 | 严格受限的输入输出映射，如机器翻译、单句改写、抽取式摘要 | 架构复杂度高，训练和推理要分别维护两套注意力与缓存逻辑，规模扩展难度高于单塔 | T5, BART |
+
+![架构选型决策树与任务边界流动图](/images/content-rebuild/4f85e0c5a5691d93/fig-6.png)
+
+#### 落地选型指引
+
+1. **高吞吐离线分类与向量检索**：如果是数千万条文本的批量分类、语义聚类或搭建 RAG 系统的向量数据库，100M 至 300M 参数的 Encoder-only 模型（如 RoBERTa、BGE）单卡吞吐可达每秒数千条，延迟低且显存占用极小。强行用数十亿参数的 CLM 做批量离线特征抽取属于算力浪费。
+2. **开放逻辑交互与生成应用**：只要涉及开放式指令理解、多步推理规划、写代码或长篇创作，基于 CLM 的 Decoder-only 模型是唯一在工程上经受大规模验证（Scaling Laws）的路径。在此类底模上经过监督微调（SFT，参考 [/fundamentals/training-and-finetuning/sft.md](/fundamentals/training-and-finetuning/sft.md)）即可对齐人类对话需求。
+3. **推理缓存机制的区别**：在推理阶段，CLM 通过持续维护键值缓存（KV Cache）来避免对前文重复执行矩阵乘法计算（相关机制详见 [/llm-100/training/autoregressive-lm.md](/llm-100/training/autoregressive-lm.md)）。而对于 Encoder-only 模型，整个输入是一次性前向计算完成的，不需要逐词循环采样，因此推理阶段不存在因果 KV Cache 的逐步增长开销。
+
+---
+
+### 常见误区澄清
+
+* **误区 1：认为双向注意力在所有场景下都比单向注意力更优秀**  
+  双向注意力允许标记看到“后文”，提取静态全局特征时确实保留了更完整的句子共现信息；但在时序生成的自回归世界里，后文在生成时还未产生。强制把双向注意力强套在自由生成上，会导致训练与推理严重脱节。
+* **误区 2：以为 CLM 训练时是逐字按时间步循环运行的**  
+  训练阶段的 CLM 与 MLM 一样，全部采用**并行前向计算**（Teacher Forcing 模式）。序列所有词一次性送入 Transformer，通过因果掩码矩阵一次性算出所有位置的注意力，并不是推理阶段那种一个词接一个词循环前向跑。
+* **误区 3：混淆训练时的因果掩码与推理时的 KV Cache**  
+  因果掩码是前向注意力矩阵里的下三角遮挡；KV Cache 是为了在自回归推理步骤中跳过已经生成词的投影重算所维护的显存缓存。预训练阶段由于输入已知且并行处理，并不使用推理阶段的 KV Cache 逻辑。
+
+---
+
+### 课后练习
+
+1. **代码验证**：在上述 PyTorch 实验代码中，若将输入序列长度 `seq_len` 改为 10，并将 `masked_positions` 设为仅第 3 位为 `True`（模拟 10% 遮盖率）。重新运行后，分别计算 CLM 和 MLM 产生梯度的标记数量比例，并说明为什么 CLM 依然保持 90% 的梯度位置覆盖。
+2. **机制分析**：为什么 BERT 无法像 GPT 一样，仅凭修改 Prompt（例如直接拼接“翻译成英语：”）就在零样本或少样本下直接生成连贯的译文句子？其核心限制来自模型结构的哪一部分？

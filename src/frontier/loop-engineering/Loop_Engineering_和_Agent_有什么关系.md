@@ -1,192 +1,220 @@
 ---
-title: Loop Engineering 和 Agent 有什么关系？
+title: 写了 while 循环就是 Agent 吗？Loop Engineering 与 Agent 的区别与协同
 icon: mdi:refresh
 date: 2026-07-16
 tag:
-  - Loop Engineering
-  - Agent
+- Loop Engineering
+- Agent
+description: 剖析预定义代码循环与自主智能体的决策权归属、状态空间与可靠性差异，掌握两者在生产环境中的分层协同架构。
 ---
 
-# Loop Engineering 和 Agent 有什么关系？
+在开发大语言模型应用时，经常会遇到这样一种认知模糊：只要在模型调用外层写一个 `while` 循环，系统就变成了“Agent（智能体）”；或者把所有包含重试、校验逻辑的程序通通打包叫做 Agent。这种称呼上的笼统，容易掩盖系统在控制权、状态边界和执行确定性上的真实差异。
 
-> 一句话核心：Loop Engineering 是一种围绕 Agent Loop 展开的系统设计方法论，解决的是「如何让 Agent 持续、稳定、可控地完成任务」，而非仅仅让它「转起来」。
-## 核心概念（术语表）
+在上一讲[一个 Loop 由哪些部分组成](/frontier/loop-engineering/一个_Loop_由哪些部分组成.md)中，我们梳理了由输入、执行、校验、状态转移构成的闭环系统。本文将从架构层面解答两个核心问题：由代码严格控制流程的 **Loop Engineering（循环工程）**，与由模型自主决定流程的 **Autonomous Agent（自主智能体）** 到底有什么区别？在实际生产中，两者又该如何配合？
 
-- **Agent Loop**：Agent 工具里的递归执行原语（primitive），定义一个目的后让 Agent 按固定节奏反复执行：读状态 → 行动 → 写回结果 → 下一轮，直到满足停止条件或升级给人。
-- **Loop Engineering**：围绕 Agent Loop 的系统设计方法论，关注如何发现任务、分配任务、验证结果、持久化状态，并在该交还时交还给人。
-- **Harness Engineering**：Agent 的「运行外壳」，包括工具、权限、沙箱、日志、测试、状态和人类接管，决定 Agent 能做什么、不能做什么。
-- **Context Engineering**：给 Agent 提供什么上下文，包括项目背景、代码结构、历史决策，让 Agent 更容易做对。
-- **Prompt Engineering**：如何组织指令让模型更准确理解任务，适合边界清晰的小任务如写文案、总结文章。
-- **Skills**：持久化的项目知识包，把任务经验、脚本、模板、坑点放在一起让 Agent 复用，降低 intent debt。
-- **Worktrees**：并行执行时的文件隔离策略，避免多 Agent 同时操作同一代码库导致 merge 灾难。
-- **MCP（Model Context Protocol）**：Plugins & Connectors 的实现协议，连接 GitHub、Linear、Slack 等真实系统。
+![Loop 与 Agent 架构概念对比封面](/images/content-rebuild/dc90ab56c2202699/cover.png)
+
+---
+
+### 贯穿实例：修代码任务中的两种控制流
+
+为了直观理解两者的差异，我们看一个具体的开发任务：**为一段 Python 代码补全单元测试，并确保测试能全部通过。**
+
+在实际工程中，有两种截然不同的实现方式：
+
+#### 方式 A：预定义的循环工作流（Loop Engineering）
+工程师预先写好状态转移逻辑：
+1. 节点 1：调用模型生成单元测试文件；
+2. 节点 2：程序调用宿主环境的 `pytest` 运行该测试；
+3. 转移判断：如果退出码为 0，流程跳转到结束节点；如果退出码不为 0，程序捕获标准错误输出，连同原代码一起打包为提示词，流转回节点 1 重新生成；
+4. 终止保护：如果重试超过 3 次仍未通过，程序触发告警并停止。
+
+在这个流程中，每一步往哪里走、什么时候重试、重试几次停下，完全由**外层 Python 代码中的条件分支（if/else）**锁死。模型只是流程节点里的一个文本生成器，不能擅自决定去调用其他脚本或跳过测试。
+
+#### 方式 B：自主智能体（Agent）
+工程师向大模型注册一组工具（读取文件、编辑文件、执行命令），并输入总目标：“提高当前模块的代码覆盖率并修复失败用例”。
+
+程序启动一个通用推理循环：
+1. 模型根据任务目标，自主决定先调用“读取文件”工具查看代码；
+2. 收到文件内容后，模型自主决定接下来是直接改原代码、先写测试还是先查配置；
+3. 运行测试遇到报错后，模型自己分析原因，决定是修改测试断言还是重新定位代码 bug；
+4. 当模型在输出中不再发起工具调用、而是输出自然语言报告时，系统才结束执行。
+
+在这个流程中，**下一步执行什么动作的决定权在模型**。模型既是代码生成的参与者，又是整个调度流程的主导者。
+
+![代码控制流与模型推理流机制对比](/images/content-rebuild/dc90ab56c2202699/fig-1.png)
+
+Anthropic 在《Building effective agents》中对这两类架构作出了明确区分：
+* **工作流（Workflows）**：模型和工具的调用链路通过预定义的代码路径进行显式编排。
+* **智能体（Agents）**：模型根据环境反馈，自主规划后续步骤并决定调用何种工具。
+
+两者的伪代码结构对比如下：
+
+```python
+# 示例 A：预定义状态转移 Loop（控制权在宿主代码）
+def code_orchestrated_loop(task_input):
+    state = {"code": task_input, "tests": "", "errors": "", "attempts": 0}
+    while state["attempts"] < 3:
+        # 模型仅负责当前节点的文本转换，输出内容与运行环境仍具随机性
+        state["tests"] = call_llm_writer(state["code"], state["errors"])
+        passed, logs = run_pytest(state["tests"])
+        if passed:
+            return state["tests"] # 达到代码预设的校验放行标准
+        state["errors"] = logs
+        state["attempts"] += 1
+    raise TimeoutError("超过最大重试次数")
+
+# 示例 B：自主决策 ReAct Agent（控制权在模型推理）
+def autonomous_react_loop(task_prompt, available_tools):
+    messages = [{"role": "user", "content": task_prompt}]
+    while True:
+        # 由模型决定是调用工具还是交付最终结果
+        response = call_llm_with_tools(messages, available_tools)
+        if not response.tool_calls:
+            return response.content # 模型自发决定何时终止
+        
+        for tool_call in response.tool_calls:
+            tool_result = execute_tool(tool_call.name, tool_call.arguments)
+            messages.append({"role": "tool", "content": str(tool_result)})
+```
+
+因此，判断一个系统是 Loop 还是 Agent，不能只看外层是否有 `while`。关键在于：**决定“下一跳去哪里、做什么”的权利，究竟在确定性代码手中，还是在大模型的概率推理中。**
+
+---
+
+### 决策权归属：图编排控制流与模型自主推理流
+
+我们可以从**控制权归属（Locus of Control）**更深入地比较两者的运行机制。
+
+在[Agent 核心流程](/interview/agent-interview/agent-loop.md)中，典型的 ReAct（Reasoning + Acting）模式由模型主导：
+$$\text{Action}_{t+1} = \arg\max_A P(A \mid \text{Context}_t)$$
+每一轮循环，模型根据历史观察上下文，在所有开放动作中挑选一个。模型不仅决定传入的参数，还决定了步骤的执行次序。
+
+而在 Loop Engineering 中，主流实现通常基于图编排或有限状态机（例如使用 LangGraph 的 `StateGraph` 构建的状态流）。模型的角色被限制为节点内部的处理函数：
+
+* **状态转移规则外置**：大模型只负责完成该节点的特定输入输出转换（如抽取结构化字段或重写代码片段）。转移条件的判定（如格式校验、单测断言、重试计数）全部由外部代码执行。
+* **分支逻辑由图定义**：外部图定义了确定的拓扑结构。当校验失败时，代码强制流转到错误修复节点；连续超限时，强制流转到人工介入节点。大模型输出的内容无法越权更改这些分支走向。
+
 <ReadMoreLock />
 
-## 历史背景 / 来源
+| 维度 | 预定义 Loop（工作流 / 状态机编排） | 自主 Agent（ReAct / 开放规划） |
+| :--- | :--- | :--- |
+| **分支决策方** | 预先编写的业务代码与验证规则 | 大模型的自回归采样输出 |
+| **执行路径** | 固定的有向图（节点与连线在编译时已知） | 运行时根据提示词与反馈动态展开的路径 |
+| **模型角色** | 流程节点上的特定数据计算单元 | 决定系统全局调度动作的中枢 |
+| **分支走向** | 依靠代码层面的静态规则或测试断言 | 依靠模型的理解与意图反思 |
 
-Loop Engineering 概念在 2026 年由 AI 编程工具链社区提出。Claude Code 负责人 Boris Cherny 说「我不再给 Claude 写 prompt，我的工作是为它写 loop」；OpenClaw 作者 Peter Steinberger 说「你不该再亲自 prompt coding agent，而该设计 loop 来 prompt 它们」。Addy Osmani 的概括被广泛引用：「Loop engineering is replacing yourself as the person who prompts the agent. You design the system that does it instead」。开源参考库 cobusgreyling/loop-engineering 提供了完整的模式、构件与落地路径。
+![决策权控制流转移对比示意图](/images/content-rebuild/dc90ab56c2202699/fig-2.png)
 
-## 工作原理 / 核心机制
+---
 
-### 整体思路
-Loop Engineering 将「人驱动 Agent」转变为「系统驱动 Agent」，杠杆点从「打磨单条 prompt」移到「设计编排 Agent 的控制系统」。
+### 状态空间：封闭状态转移与开放动作空间
 
-### 输入/输出
-- 输入：业务目标、任务定义、验证规则、成本预算
-- 输出：自动化执行循环、状态记录、成本日志、可观测报告
+两类架构在可预测性上的不同，根源在于它们所处的状态空间不同。
 
-### 核心流程（三层架构）
+#### 1. 封闭状态集合与确定转移
+工程化的 Loop 系统通常建模为有限状态机（FSM）。其状态集合 $S$ 和输入事件集合 $I$ 是完全已知的：
+$$\delta: S \times I \rightarrow S$$
+例如在写代码的场景下，状态枚举仅限于 `[PENDING, GENERATING, TESTING, FAILED_RETRY, SUCCESS]`。不管循环运行多少次，系统在任意时刻都处于明确的状态点上，不存在未定义的灰色状态。
 
-**第一层：Harness（单次运行环境）**
-- 定义 Agent 能用什么工具、能访问什么权限、在什么环境执行
-- 具体输入：MCP 配置文件、权限白名单、工具列表
-- 具体输出：受限的 Agent 执行上下文
-- 数字参考：Claude Code 通过 skills 配置实现 7 种不同运行模式
+#### 2. 开放动作空间与发散风险
+自主 Agent 面临的状态空间要开阔得多。虽然注册给模型的工具集合是离散且固定的，但工具调用的上下文、传递的参数、以及多轮对话记录属于无界的自然语言序列。系统在第 $t$ 步的全部状态包含全部交互历史：
+$$S_t \in \mathcal{V}^*$$
+这让 Agent 具备了处理开放式复杂问题的灵活性，但同时也引入了发散风险：模型可能编造不存在的参数名、在两个相似工具间陷入来回振荡的死循环，或在长上下文干扰下偏离最初目标。
 
-**第二层：Loop（重复执行编排）**
-- Harness + 调度 + 状态 + 验证链
-- 具体输入：定时触发（cron）、事件触发（webhook）、手动触发
-- 具体输出：每轮执行结果、状态变更、验证报告
-- 关键机制：失败反馈循环 → 再次修改 → 必要时升级给人
+在[任务规划能力分析](/interview/agent-interview/agent-planning.md)中我们可以看到，尽管引入复杂的规划机制能改善任务拆解质量，但开放搜索树的不确定性依然存在。选择预定义状态机还是开放动作空间，本质上是在**对未知输入的适应力**与**系统执行的确定性**之间寻找平衡。
 
-**第三层：Loop Engineering（系统设计与运营）**
-- 设计并运营上述 Loop 系统的工程实践
-- 具体输入：团队规范、验收标准、成本约束
-- 具体输出：可持续运行的无人值守系统
-## 关键知识点
+![有限状态机网格与开放概率树对比](/images/content-rebuild/dc90ab56c2202699/fig-3.png)
 
-- Agent Loop 是「零件」，Loop Engineering 是「用零件造能跑的生产机器」
-- 裸 Loop 缺少：分诊规则、外部记忆（跨 session 状态）、Maker/Checker 分离、人工闸门、成本上限、可观测性
-- Loop Engineering 的六大构件：Automations/Scheduling（心跳）+ Worktrees（隔离）+ Skills（知识）+ MCP（连接）+ Sub-agents（分工）+ Memory/State（脊柱）
-- 成功标准从「它又在跑了」升级为「它跑得对、跑得省、出事能停、人能看懂它干了什么」
-- 典型产物从 `/loop 1d` 一条命令变成 STATE.md + Skills + Worktree 策略 + Verifier + Checklist
-- 模式选型：Daily Triage（每日分诊）、PR Babysitter（PR 保姆）、CI Sweeper（CI 清洁工）、Dependency Sweeper（依赖清洁工）
-- 分阶段上线：L1 只报告 → L2 小步自动修复 → L3 无人值守
-- 安全策略：denylist、禁止盲目 auto-merge、MCP 权限最小化
-- 成本工具：loop-budget.md、loop-run-log.md、loop-cost 估算
-- 「修 bug loop」示例：读 issue → 找代码 → 修改 → 运行测试 → 失败则读取报错继续修 → 通过则生成修改总结 → 创建 PR 或交给人 review
-- 内容生产 loop：收集资料 → 总结要点 → 检查事实 → 生成大纲 → 写正文 → 检查夸张表达 → 交人润色
-- 四个工程关键词回答四个问题：怎么问（Prompt）、给它看什么（Context）、怎么持续推进（Loop）、在哪里安全运行（Harness）
-- 腾讯《2026年AI人才报告》指出 AI 编程提效 50%，Skills 让 AI 从「聊天助手」升级为「生产力工具」
-- Loop 跑得越久，越需要清晰的边界、可靠的验证和明确的停止条件，否则错误会被循环放大
+---
 
-## 应用场景
+### 稳定性质感：复合概率衰减与局部隔离
 
-- **Claude Code 大型代码库**：通过 CLAUDE.md 分层文档、LSP 符号导航、hooks 自动维护、skills 按需加载、MCP 接入内部系统，让 Claude 高效理解复杂项目（含 C/C++/Java 等）
-- **OpenClaw 工作流**：用 validate-patterns + audit workflow 维护仓库，根目录用 LOOP.md 记录「这个参考库自己跑哪些 loop」，典型「吃自己狗粮」实践
-- **CI Sweeper 场景**：定时检查 CI 失败原因，自动分类、可修复的自动提 PR、需人工介入的发 Slack 通知，将「每天早上该查 CI」变成系统行为
-- **PR Babysitter 场景**：监听新 PR，检查代码规范、测试覆盖、依赖变更，自动添加 reviewer、设置标签，复杂 PR 升级给人处理
-- **Bug Fix Loop 场景**：Agent 读 issue → 找相关代码 → 尝试修改 → 运行测试 → 失败读报错继续修 → 通过生成总结 → 创建 PR，循环直到人工 review
+在面向线上交付的工程系统中，团队需要评估长链路调用的成功率。
 
-## 常见误区 / 踩坑
+#### 复合错误概率的简化算例
+假设一个开放推理任务需要模型连续自主决策 $n$ 步。为了做教学示意，我们假设模型在每一步做出正确决定的概率相互独立且均为 $p$：
+$$P_{\text{success}} = p^n$$
+若单步决策的准确率 $p = 0.95$：
+* 连续决策 3 步时：$P_{\text{success}} = 0.95^3 \approx 85.7\%$
+* 连续决策 10 步时：$P_{\text{success}} = 0.95^{10} \approx 59.9\%$
 
-- ❌ **误区 1**：以为在终端敲 `/loop 1d` 就算「做 loop 工程」
-  ✅ **正解**：这只是启动了 Agent Loop，真正的 Loop Engineering 包括 STATE.md、Skills、Worktree 策略、Verifier、Checklist 等一整套系统设计
+需要明确的是，实际系统中的每一步决策受前序上下文影响，并非严格独立的随机事件；但这个示意算例直观展示了开放链条的核心风险：**一旦中间某一步模型的推理出现偏差，错误的观察结果将作为事实输入下一轮上下文，导致后续动作在错误的假设上越走越远。** 针对这一现象，我们在[Agent 错误恢复处理](/interview/agent-interview/agent-error-handling.md)中讨论过相关补救策略。
 
-- ❌ **误区 2**：认为有了 `/loop` 命令就能无人值守
-  ✅ **正解**：裸 Loop 缺分诊规则（什么该做/忽略）、跨 session 状态、外部记忆，没有这些「跑久了会闯祸」
+#### Loop Engineering 如何提供稳定性保障
+Loop Engineering 降低长链路发散的主要方式是**设立局部验证关卡与上下文隔离**：
 
-- ❌ **误区 3**：Agent 自己写代码自己验证
-  ✅ **正解**：必须 Maker/Checker 分离，禁止自评，用 Sub-agents 分工，一个负责改，一个负责验证
+1. **局部收敛**：如果单测未通过，系统回退修复时只传递“原函数 + 失败日志”，而不是把多轮工具尝试的整串聊天历史堆积进模型。验证通过后，向下游节点输出确定性的代码工件，切断了错误在全局上下文中的连锁传导。
+2. **可断点恢复与重放**：在 LangGraph 等状态机编排框架中，每个步骤完成后都会将当前状态快照写入持久化存储（Checkpointer）。某一步发生异常时，系统可以精确回滚到上一个稳定快照重新执行，或者转交人工审查。
 
-- ❌ **误区 4**：Loop 设计好就不用管了
-  ✅ **正解**：需要可观测性（loop-run-log.md）、成本上限（loop-budget.md）、人工闸门，高风险路径必须升级
+在金融结算、表结构变更、合规审核等对结果准确率要求极高、不允许意外越权的业务中，由代码掌控全局流转的状态机 Loop 往往是更为稳妥的基石。
 
-- ❌ **误区 5**：把 Loop Engineering 和 Harness Engineering 混为一谈
-  ✅ **正解**：Harness 管单次运行（工具箱），Loop 管重复编排（传送带），Loop Engineering 管整套系统设计与 SOP（工厂设计）
+![路径发散与局部验证收敛对比图](/images/content-rebuild/dc90ab56c2202699/fig-4.png)
 
-## 性能 / 复杂度
+---
 
-- **Token 消耗**：Agent Loop 每轮迭代消耗 token，没有 Loop Engineering 约束可能「烧穿」预算
-- **响应延迟**：单次 Loop 包含 Agent 执行 + 验证 + 状态写回，延迟 = 单次 Agent 延迟 × 迭代次数
-- **规模化边界**：
-  - 方案 A（裸 Loop）：n ≤ 10 任务/天时可行
-  - 方案 B（Loop Engineering）：n > 10 任务/天必须，系统化后边际成本趋近 0
-- **人工介入频率**：无 Loop Engineering 时每 2-3 轮需人工介入，有完整系统后降至每 50-100 轮介入一次（L3 阶段）
-- **参考库数字**：cobusgreyling/loop-engineering 仓库自身通过 validate-patterns + audit workflow 自动化维护
+### 分层协同：宏观 Agent + 微观代码受控 Loop
 
-## 与相关概念的区别
+在实际生产中，Loop Engineering 与 Agent 并不是非此即彼的对立关系。当前工业实践中成熟的架构往往采用分层协同：**宏观层用 Agent 应对开放需求，微观层用代码受控的闭环 Loop 保障局部交付质量。**
 
-### vs Prompt Engineering
-- 维度 1（粒度）：Prompt Engineering 优化单次问答，Loop Engineering 设计任务编排
-- 维度 2（适用）：Prompt 适合边界清晰的小任务（写文案、总结），Loop 适合长流程、跨 session 的复杂任务
-- 维度 3（演进）：Prompt → Context → Loop → Harness 是递进关系，后者包含前者而非替代
-- 怎么选：明确任务边界用 Prompt，涉及「明天还继续做」用 Loop Engineering
+```
+                                    [ 用户开放任务需求 ]
+                                              │
+                                              ▼
+   ┌──────────────────────────────────────────────────────────────────────────────────┐
+   │ 宏观层：自主 Agent（负责开放规划与多工具调度）                                   │
+   │                                                                                  │
+   │  [ 意图理解 ] ───▶ [ 任务拆解 ] ───▶ [ 调度决策 ] ───▶ [ 综合结果 / 交付用户 ]   │
+   │                                          │                                       │
+   └──────────────────────────────────────────┼───────────────────────────────────────┘
+                                              │ 调用高质量复合工具
+                                              ▼
+   ┌──────────────────────────────────────────────────────────────────────────────────┐
+   │ 微观层：代码受控 Loop（负责局部闭环与结果验证）                                  │
+   │                                                                                  │
+   │  ┌───────────────┐        修改代码         ┌────────────────┐                    │
+   │  │               │ ◀────────────────────── │                │                    │
+   │  │ LLM Generator │                         │  Unit Verifier │                    │
+   │  │               │ ──────运行测试/Linter──▶│                │                    │
+   │  └───────────────┘                         └────────────────┘                    │
+   │                                                    │                             │
+   │                                          测试全部通过 (闭环收敛)                  │
+   │                                                    ▼                             │
+   │                                       [ 将可信工件返回给上层 Agent ]             │
+   └──────────────────────────────────────────────────────────────────────────────────┘
+```
 
-### vs Harness Engineering
-- 维度 1（层次）：Harness 是「工位工具箱」，Loop Engineering 是「工厂设计与 SOP」
-- 维度 2（关注）：Harness 关注单次运行的安全可控，Loop Engineering 关注持续运营的系统性
-- 维度 3（产物）：Harness 产出受限的 Agent 执行上下文，Loop Engineering 产出 STATE.md + Skills + Checklists
-- 怎么选：先搭 Harness 保证安全，再加 Loop Engineering 实现自动化
+#### 协同运作机制
+1. **宏观层（Agent 负责灵活路由）**：用户输入的提问可能非常模糊（例如“帮我排查项目里的登录失败问题并修复”）。此时外层使用具备自主规划能力的 Agent，负责在多个业务模块中检索代码、阅读提交日志、决定先查哪个子系统。
+2. **微观层（Loop 负责受控执行）**：当 Agent 确定要“重写授权验证函数”时，它调用的不是一个未经测试的裸代码生成接口，而是一个封装好的**局部代码受控 Loop 工具**（例如 `code_repair_tool`）。
+3. **局部封闭与防污染**：
+   * 该工具内部包含固定的 `[生成 -> 静态检查 -> 测试运行 -> 修复重试]` 循环，最多允许执行固定轮次。
+   * 只有当该工具内部成功验证通过后，才将最终可用的代码字符串返回给外层 Agent；如果重试超限仍未通过，则返回结构化错误码。
+   * 这样做避免了把生成过程中的 3 次试错报错和废弃代码全量灌进外层 Agent 的上下文，从而显著降低了[上下文窗口超限与污染](/interview/agent-interview/context-management.md)的概率。
 
-### vs Context Engineering
-- 维度 1（问题）：Context 回答「给 Agent 看什么」，Loop 回答「怎么让它持续推进」
-- 维度 2（时机）：Context 在每次 Agent 调用前生效，Loop 在多轮调用间维护状态
-- 维度 3（关系）：Context 是 Loop 的输入来源之一，Loop 是 Context 的消费方
-- 怎么选：Context 解决单轮决策质量，Loop 解决多轮协作效率
+通过这种结构，外层系统保留了应对复杂探索任务的灵活性，而内层步骤通过循环工程守住了每个交付物的功能底线。
 
-## 进阶 / 面试加分项
+![宏观 Agent 规划与微观局部 Loop 协同架构图](/images/content-rebuild/dc90ab56c2202699/fig-5.png)
 
-- **最新趋势**：2026 年 Loop Engineering 正从「单 Agent Loop」向「多 Loop 协调」演进，解决多个 loop 同时跑时的优先级与冲突处理问题
-- **业界争议**：是否需要「无人值守」的终极目标 vs 始终保留「人工闸门」的保守派观点，Peter Steinberger 持后者立场
-- **一句话送给候选人**：Boris Cherny 说得精辟——你的工作不再是给 Agent 写 prompt，而是给它设计 loop；从「运动员」变成「教练」甚至「裁判」
+---
 
+### 架构选型参考
 
-## 面试如何回答
+当面对一个具体的工程任务时，可以通过以下标准评估应当采用何种实现形态：
 
+![工程选型与架构决策流程图](/images/content-rebuild/dc90ab56c2202699/fig-6.png)
 
-### 🟢 什么是 Loop Engineering？它和 Agent Loop 有什么区别？
+1. **适合采用预定义 Loop（Workflow / 状态机）的场景**：
+   * 任务有清晰的标准作业程序（SOP），每个步骤的输入输出格式固定；
+   * 存在客观、可自动运行的硬性校验手段（如代码编译、单元测试、JSON Schema 校验、SQL 语法检查）；
+   * 业务受到严格的可靠性与合规约束，需要审计每一步的执行流转，调用成本需维持在可预期的预算内。
 
-**回答要点**：
+2. **适合采用自主 Agent 的场景**：
+   * 任务边界高度开放，可能需要 1 步也可能需要 20 步，无法提前枚举固定的分支路径（如开放领域的探索式调研、长程代码库重构分析）；
+   * 需要多轮与用户互动澄清需求，依赖大模型的综合上下文理解来动态决定下一步动作；
+   * 运行在沙箱或只读环境中，中间步骤的偶尔试错对业务不构成破坏性影响。
 
-Loop Engineering 是围绕 Agent Loop 展开的系统设计方法论，关注如何发现任务、分配任务、验证结果、持久化状态，并在该交还时交还给人。Agent Loop 是 Agent 工具里的递归执行原语，是你启动一个会重复的 Agent 任务（敲 /loop 1d）；而 Loop Engineering 是设计发现→执行→验证→交接的完整系统。简单说：Agent Loop 是零件，Loop Engineering 是用零件造能跑的生产机器。Claude Code 负责人 Boris Cherny 说「我不再给 Claude 写 prompt，我的工作是为它写 loop」，OpenClaw 作者 Peter Steinberger 说「你不该再亲自 prompt coding agent，而该设计 loop 来 prompt 它们」。Addy Osmani 的概括更直接：「你设计 prompt agent 的系统，而不是亲自 prompt」。
+3. **适合采用分层协同的场景**：
+   * 全局目标开放多变，但某些具体子步骤具有严格的技术指标（如先由 Agent 自由探索问题根因，定位完成后交由测试闭环 Loop 完成代码修复与验证）。
 
-
-### 🟢 裸 Agent Loop 存在哪些不足？为什么需要 Loop Engineering？
-
-**回答要点**：
-
-仅有 /loop 不等于一套可上线的工程系统。一个裸 loop 往往缺：1）分诊规则（什么该做、什么该忽略）；2）外部记忆（跨 session 的状态）；3）Maker/Checker 分离（写代码的自己验自己）；4）人工闸门（高风险路径必须升级）；5）成本上限与可观测性。举例：让 Agent 每天查 CI 失败原因，它可能修了 5 轮都没修对，每轮烧 token；或者修错了主干代码没人拦着；或者跑了一周后 context 爆了。没有 Loop Engineering，「它又在跑了」只是安慰奖，真正的成功标准是「跑得对、跑得省、出事能停、人能看懂它干了什么」。
-
-
-### 🟡 Loop Engineering 的六大构件是什么？每个构件的职责是什么？
-
-**回答要点**：
-
-一个能「无人值守」地跑起来的 loop，通常包含六个部分：1）Automations / Scheduling：心跳，按 cadence 发现与分诊任务；2）Worktrees：并行执行时文件隔离，避免 merge 灾难；3）Skills：持久项目知识，偿还 intent debt，把经验脚本模板放在一起让 Agent 复用；4）Plugins & Connectors (MCP)：连 GitHub、Linear、Slack 等真实系统；5）Sub-agents：Maker/Checker 分工，禁止自己写代码自己验证；6）Memory / State：STATE.md 等外部状态，跨 session 的脊柱。这六者加在一起，才构成完整的 Loop 流水线，缺任何一个都会在某个环节出问题——比如没 Worktree 两个 Agent 同时改同一个文件就灾难了。
-
-
-### 🟡 如何用 Loop Engineering 修一个 Bug？请描述完整流程。
-
-**回答要点**：
-
-以「修 bug loop」为例，完整流程是：1）Agent 读取 issue，找到相关代码并尝试修改；2）运行测试，如果测试失败，读取报错继续修复；3）如果测试通过，生成修改总结；4）最后创建 PR，或者把结果交给人 review。这里关键是「失败反馈循环」机制：Agent 不只改完告诉你，而是循环直到通过验证或升级给人。与传统方式对比：以前你打开终端 prompt「帮我修这个 bug」，Agent 改一版，你跑测试，失败再 prompt，循环靠人推动；Loop Engineering 把这个过程系统化——分诊规则决定这是不是该 Agent 修的，Skills 提供历史修复经验，Verifier 检查修复质量，State 记录当前进度，最后人工闸门决定是否合并。
-
-
-### 🟡 Loop Engineering 和 Harness Engineering、Context Engineering 的关系是什么？
-
-**回答要点**：
-
-三个概念回答四个问题，呈递进关系：Prompt Engineering 回答「怎么问」，Context Engineering 回答「给它看什么」，Harness Engineering 回答「在哪里安全运行」，Loop Engineering 回答「怎么持续推进」。从层次上看：Harness = 单次 Agent 运行的环境（工具箱），决定 Agent 能用什么工具、什么权限、在什么环境；Loop = Harness + 调度 + 状态 + 验证链（传送带的运转）；Loop Engineering = 设计并运营上述 Loop 系统的工程实践（工厂设计与 SOP）。类比：一辆车的发动机是模型，Harness 是车身仪表盘刹车方向盘安全带，Loop 是让车按设定路线反复跑，Loop Engineering 是设计这条路、制定交规、安排维修保养。
-
-
-### 🟡 Loop Engineering 有哪些常见模式和落地路径？
-
-**回答要点**：
-
-模式选型方面，常见四类：1）Daily Triage（每日分诊）：每天定时扫描待处理任务，分类后分配；2）PR Babysitter（PR 保姆）：监听新 PR，自动检查规范、添加 reviewer、设置标签；3）CI Sweeper（CI 清洁工）：定时检查 CI 失败原因，可修复的自动提 PR，需人工的通知 Slack；4）Dependency Sweeper（依赖清洁工）：定期检查过时依赖，自动升级并跑测试。落地路径建议分三阶段：L1 只报告（Agent 发现问题叫人）→ L2 小步自动修复（低风险自动处理）→ L3 无人值守（完全自动化但保留闸门）。参考库 cobusgreyling/loop-engineering 提供 validate-patterns + audit workflow 维护自己的实践。
-
-
-### 🔴 如何设计 Loop Engineering 的成本控制和可观测性？
-
-**回答要点**：
-
-成本控制是 Loop Engineering 区别于「玩一玩」的关键。必须有的三个文件：1）loop-budget.md：设定每次 Loop、每天、每月的 token 预算上限；2）loop-run-log.md：记录每次运行消耗、迭代次数、成功率；3）loop-cost 估算工具：运行前预估本次消耗，超预算自动停止。可观测性方面，需要：每轮执行记录（Agent 做了什么决策）、状态快照（当前进度存在 STATE.md）、人工介入记录（何时因何原因升级给人）。举例：CI Sweeper 如果每小时跑一次，每次消耗 5000 tokens，每天 12 万 token 消耗需要被追踪，否则月底账单会爆。没有可观测性的 Loop 就像没有仪表盘开车——跑着跑着不知道油还剩多少、发动机温度多少。
-
-
-### 🔴 多 Agent 场景下 Loop Engineering 如何处理并行与协调问题？
-
-**回答要点**：
-
-多个 Agent 同时跑时，Loop Engineering 要处理三个问题：1）Worktree 隔离：并行执行时文件隔离，避免两个 Agent 同时改同一个文件导致 merge 灾难；每个 Agent 在独立工作目录操作，完成后通过 PR 合并。2）优先级与冲突：多个 Loop 同时触发时的执行顺序，比如 CI Sweeper 发现依赖更新和 PR Review 同时触发，需要明确优先级规则。3）Sub-agents 分工：复杂任务拆成 Maker/Checker，Makers 负责写代码，Checkers 负责验证，禁止自评。典型踩坑：没做 Worktree 隔离，两个 Agent 同时修同一个 bug，各自提交，最终 merge 冲突要人救火。正确做法是按模块或按文件类型分配 Worktree，用 State 记录每个 Worktree 当前任务状态。
-
+理清这两者的控制权边界，工程团队就能避开概念混淆，把大模型的推理能力用在需要灵活性探索的地方，把程序的控制流交还给稳定可控的软件工程框架。接下来，我们将通过[最简单的 Loop：写代码、跑测试、自动修复](/frontier/loop-engineering/最简单的_Loop_写代码_跑测试_自动修复.md)，在实际代码中跑通一个最小可运行的确定性验证闭环。

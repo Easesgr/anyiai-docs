@@ -1,167 +1,340 @@
 ---
-title: MCP 的工作流程是什么？
+title: MCP 的工作流程是什么？从握手到工具调用的完整时序
 icon: mdi:workflow
 tag:
-  - MCP
-  - 工作流程
-  - 协议
+- MCP
+- 工作流程
+- 协议
+description: 详解 MCP 基于 JSON-RPC 2.0 的四阶段时序：初始化握手协商、动态能力发现、工具调用与进度流转、双层异常与取消机制。
 ---
 
-# MCP 的工作流程是什么？
+在面试中被问到 Model Context Protocol（MCP）时，不少开发者只能回答出“Host、Client、Server 三者通过 JSON-RPC 通信”，一旦面试官深入追问“Client 如何知道 Server 开放了哪些能力”、“长耗时任务如何通知前端更新进度”、“SQL 执行报错该返回协议错误还是正常响应”，回答往往缺少明确的消息格式与时序状态依据。
 
-这道题考的是 MCP（模型上下文协议）的核心架构和工作原理，属于 AI Agent 工具调用领域的进阶知识点。面试官想看你能不能把"AI 怎么调用外部工具"这件事讲清楚。
+MCP 是一个建立在 JSON-RPC 2.0 规范之上的应用层协议。它通过固定的消息交互阶段，解决了 AI 客户端与外部数据源、执行环境之间的握手协商、能力暴露与异步调用问题。
 
-我从四个方面来讲：MCP 是什么、核心三组件怎么分工、五阶段工作流程、实际怎么用。
-
----
-## MCP 是什么——像 USB 一样的"AI 接口标准"
-
-先说清楚 MCP 是什么。
-
-MCP 全称 Model Context Protocol，是 Anthropic 在 2024 年底推出的开放协议。它的核心目标是**解决大模型和外部工具之间的连接标准化问题**。
-
-这话说得有点绕，我打个比方你就懂了。
-
-你有没有想过，为什么现在随便一个鼠标、键盘、打印机，插上电脑就能用？因为 USB 协议定义了统一的接口标准。厂商不用发明新的连接方式，只要符合 USB 规范就能互联。
-
-AI 领域之前就是这个状态。每个 AI 应用想调用工具，比如查数据库、搜网页、调 API，都要自己写一套对接代码。工具提供方也要配合不同的 AI 平台做适配。折腾得要死。
-
-MCP 就是来解决这个问题的。它定义了一套标准的通信协议，让**任何支持 MCP 的 AI 都能调用任何支持 MCP 的工具**。不用每对组合都单独开发。
-
-所以 MCP 的核心价值是：它不发明工具调用，而是**提供标准化的通信框架**。就像 USB 不发明鼠标和键盘，但让所有设备能通用。
+![MCP 会话全生命周期交互时序与消息分类概览](/images/content-rebuild/05e353ee409c0f41/cover.png)
 
 ---
+
+## 60 秒口述答案：MCP 会话的四个核心阶段
+
+面试时回答“MCP 的端到端交互流程”，可以直接按以下四个阶段组织口述：
+
+> “MCP 的完整生命周期分为四个阶段，全程基于 JSON-RPC 2.0 规范通信：
+>
+> 1. **初始化握手（Handshake）**：Client 发送 `initialize` 请求携带自身支持的功能；Server 响应自身协议版本与能力字典（如 tools、resources、prompts）；Client 回复 `notifications/initialized` 单向通知。在 Server 收到此通知前，不得处理任何业务请求。
+> 2. **能力与资源发现（Discovery）**：Client 按需发送 `tools/list` 或 `resources/list` 获取元数据与参数 Schema。当 Server 端运行时工具发生增减，会通过 `notifications/tools/list_changed` 主动广播，由 Client 自主决定是否重新拉取。
+> 3. **工具调用与进度流转（Execution）**：大模型决定调用工具后，Client 发送 `tools/call`，可在请求元数据中携带 `progressToken`；Server 执行耗时任务期间可回传多条 `notifications/progress` 通知，最后返回统一格式的执行结果。
+> 4. **异常与取消管理（Error & Cancellation）**：通信或方法解析失败返回标准 JSON-RPC Error；工具内部运行失败则在 Result 中标记 `isError: true`，便于大模型阅读错误并修正输入；超时或用户中断时，Client 可发送 `notifications/cancelled` 终止任务。”
+
+为让流程更具体，下文以一个典型场景贯穿全篇：Host 客户端（如桌面分析应用）连接一个本地数据服务 `analytics-server`（提供销售数据分析与 SQL 查询）。前置架构角色可参考 [/interview/agent-interview/mcp-architecture.md](/interview/agent-interview/mcp-architecture.md)，传输通道细节可参考 [/interview/agent-interview/mcp-modes.md](/interview/agent-interview/mcp-modes.md)。
+
 <ReadMoreLock />
 
-## 核心三组件——Host、Client、Server 的分工协作
+---
 
-搞懂 MCP，第一件事是理解它的三组件架构。
+## 阶段一：Initialize 握手与 Capabilities 双向协商
 
-**Host** 是 MCP 的运行环境。你可以理解成 AI 应用的"宿主进程"。Claude Desktop、Cursor 这些集成了 MCP 的应用就是 Host。Host 负责整合所有功能，给用户提供统一的体验。
+MCP 客户端在与服务端建立传输通道（如本地 stdio 进程管道或远程 Streamable HTTP 连接）后，不能直接发送业务请求。双方必须先完成对称的能力协商，以确定协议版本和各自支持的扩展特性。
 
-**Client** 是 Host 和 Server 之间的通信中介。Host 内部会为每个 Server 创建一个 Client。Client 负责管理连接、发送请求、接收响应。你不用直接和 Client 打交道，但它在背后默默工作。
+![MCP 初始化握手与 Capabilities 双向协商时序流程](/images/content-rebuild/05e353ee409c0f41/fig-1.png)
 
-**Server** 是暴露工具能力的组件。它对外提供工具列表、定义工具参数格式、响应工具调用请求。Server 才是真正"做事"的地方——查数据库、调 API、读文件，都由 Server 执行。
+### 1. 握手三步时序
 
-三者的关系是这样的：Host 包含 Client，Client 连接 Server。一个 Host 可以同时连接多个 Server。
+```text
+Client                                             Server
+  |                                                  |
+  | ----- (Request: id=1) initialize --------------> |
+  | <---- (Response: id=1) protocolVersion + Caps -- |
+  |                                                  |
+  | ----- (Notification) notifications/initialized ->|  (握手完成，进入就绪态)
+  |                                                  |
+  | ===== 后续方可发起 tools/list、resources/read === |
+```
 
-我再打个比方，把 MCP 比作餐厅：
+1. **Client 发送 `initialize` 请求**：声明客户端所支持的 MCP 协议版本（如 `2024-11-05`）、自身客户端信息（`clientInfo`）与支持的能力字典（`capabilities`，例如是否支持文件根路径变更监听 roots、是否支持反向模型采样 sampling）。
+2. **Server 返回 `InitializeResult` 响应**：返回服务端最终确认的协议版本、服务端标识（`serverInfo`）以及服务端开放的能力（`capabilities`，例如 tools、resources、prompts、logging）。
+3. **Client 发送 `notifications/initialized` 通知**：这是单向通知（不含 `id` 字段），向服务端确认客户端已就绪。在收到该通知之前，Server 必须拒绝处理除了初始化之外的业务请求。
 
-- **Host 是餐厅老板**，提供场所、接待顾客、整合服务
-- **Client 是服务员**，在顾客和厨房之间传话、协调
-- **Server 是厨房**，真正做菜、产出结果
+### 2. 交互报文样例
 
-顾客（用户）进餐厅，跟服务员说要点宫保鸡丁。服务员把需求传给厨房，厨房做好了再由服务员端回来。这就是三组件协作的基本模式。
+**Client -> Server（`initialize` 请求）**：
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "roots": { "listChanged": true },
+      "sampling": {}
+    },
+    "clientInfo": {
+      "name": "AnalyticsHost",
+      "version": "1.0.0"
+    }
+  }
+}
+```
+
+**Server -> Client（响应协商结果）**：
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "tools": { "listChanged": true },
+      "logging": {}
+    },
+    "serverInfo": {
+      "name": "analytics-server",
+      "version": "0.4.0"
+    }
+  }
+}
+```
+
+**Client -> Server（确认握手完成）**：
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/initialized"
+}
+```
+
+若 Server 在 `capabilities` 中未声明 `tools` 字段，说明该服务端不提供工具执行能力，Client 后续便不会尝试发送 `tools/list`。
 
 ---
 
-## 五阶段工作流程——从用户输入到结果输出
+## 阶段二：能力与资源发现（tools/list）及动态推送
 
-现在讲重点，MCP 的工作流程分五个阶段。
+握手完成后，Client 需要获取服务端公开的工具定义与参数约束，将其注入到大模型的上下文提示词或工具声明中。
 
-### 第一阶段：意图识别
+![工具与资源列表发现及动态推送刷新流程](/images/content-rebuild/05e353ee409c0f41/fig-2.png)
 
-用户给 AI 发了一条指令。
+### 1. 列表拉取与 Schema 解析
 
-比如："帮我查一下今天北京的天气"
+Client 发送 `tools/list` 请求。若工具数量较多，协议支持游标（Cursor）分页机制：
 
-AI（准确说是 AI 背后的 LLM）要理解：用户想干嘛？这个任务需要调用外部工具吗？
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/list",
+  "params": {}
+}
+```
 
-如果用户只是闲聊，AI 正常回复就行。如果涉及需要实时数据或外部能力的任务，LLM 就会触发 MCP 流程。
+Server 返回当前可用的工具数组。每个工具必须包含名称 `name`、用途描述 `description` 以及用于参数校验的 `inputSchema`（遵循 JSON Schema Draft-07 规范）：
 
-这个阶段的关键是：**LLM 判断要不要调用工具，以及调用哪个工具**。
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      {
+        "name": "query_sales_data",
+        "description": "执行只读 SQL 查询，拉取指定区域与年份的销售汇总记录",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sql": { "type": "string", "description": "只读 SQL 语句" }
+          },
+          "required": ["sql"]
+        }
+      }
+    ],
+    "nextCursor": null
+  }
+}
+```
 
-### 第二阶段：工具发现
+### 2. 动态能力变更通知（List Changed）
 
-LLM 确定要调用工具后，它需要知道有哪些工具可用。
+在微服务或插件化运行环境中，服务端的可用工具可能随权限或配置变更（如动态挂载了新数仓）。MCP 采用服务端单向通知避免客户端轮询：
 
-这时候 MCP Server 会把自己暴露的工具列表发给 Client，Client 再传给 Host。LLM 拿到工具描述（每个工具叫什么、能做什么、参数是什么），从中选一个合适的。
+1. Server 检测到工具集发生变化；
+2. Server 主动向 Client 发送 `notifications/tools/list_changed` 通知（无 `id` 字段）；
+3. Client 接收到通知后，在适当时机重新触发 `tools/list` 请求拉取最新定义。
 
-继续上面的例子。LLM 看到有个 weather 工具，能查指定城市的天气。它决定调用这个工具。
-
-这个阶段的关键是：**Server 暴露能力，LLM 基于描述做选择**。
-
-### 第三阶段：构造请求
-
-LLM 选好工具后，要构造调用请求。
-
-请求里包含：调哪个工具、传什么参数。格式是 JSON-RPC 2.0，MCP 规定的标准格式。
-
-比如：调用 weather 工具，参数是 city="北京"。
-
-这个请求从 LLM 传到 Host，传给对应的 Client，Client 再发给对应的 Server。
-
-这个阶段的关键是：**请求格式标准化**。
-
-### 第四阶段：工具执行
-
-Server 收到请求后，真正去执行操作。
-
-可能是查数据库、调第三方 API、读本地文件。执行完生成结果。
-
-还是上面的例子：Server 调用天气 API，获取到"北京今天晴，25度"。
-
-这个阶段的关键是：**Server 是实际的执行者**。
-
-### 第五阶段：结果整合
-
-Server 把执行结果返回给 Client，Client 传给 Host。
-
-Host 把结果返回给 LLM。LLM 拿到工具的原始输出，结合原始问题，生成最终回复。
-
-回到例子：LLM 拿到"北京今天晴，25度"，用它来回答用户的问题。
-
-整个流程串起来就是：**用户输入 → LLM 意图识别 → 工具发现 → 构造请求 → Server 执行 → 结果整合 → LLM 生成回复**
+类似机制也存在于资源管理中，例如 `notifications/resources/list_changed`。
 
 ---
 
-## 实战场景——MCP 怎么用、解决什么问题
+## 阶段三：工具调用时序（tools/call）与进度上报
 
-说这么多，MCP 到底能干嘛？
+当宿主的大模型在推理循环中决定使用某个工具时，Client 解析模型输出并组装为 `tools/call` 请求。关于模型如何做出调用决策，可参考 [/interview/agent-interview/tool-calling.md](/interview/agent-interview/tool-calling.md) 与 [/interview/agent-interview/mcp-vs-function-calling.md](/interview/agent-interview/mcp-vs-function-calling.md)。
 
-**场景一：数据库查询**
+![tools/call 完整调用时序与进度反馈流](/images/content-rebuild/05e353ee409c0f41/fig-3.png)
 
-你没有 MCP 之前，想让 AI 分析销售数据，得先把数据导出来、清洗好、喂给 AI。有 MCP 之后，AI 能直接连数据库，用自然语言问"去年第四季度销售额是多少"，AI 自动转成 SQL、执行、返回结果。
+### 1. 进度令牌（Progress Token）机制
 
-**场景二：实时信息获取**
+对于需要数秒甚至数分钟的长任务（如扫描海量分表或执行多维聚合），单次请求如果长时间没有数据流动，容易触发客户端网络超时，用户也无法得知任务进展。MCP 允许 Client 在请求元数据中传递 `progressToken`。
 
-AI 训练数据有截止日期，问它"今天热搜是什么"它答不上来。有了 MCP，AI 可以调用搜索工具或者新闻 API，拿到最新信息再回答。
+**Client 发送调用请求**：
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 101,
+  "method": "tools/call",
+  "params": {
+    "name": "query_sales_data",
+    "arguments": {
+      "sql": "SELECT region, SUM(amount) FROM sales_2024 GROUP BY region;"
+    },
+    "_meta": {
+      "progressToken": "query-tok-5501"
+    }
+  }
+}
+```
 
-**场景三：文件系统访问**
+**Server 执行期间分步推送进度**：
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/progress",
+  "params": {
+    "progressToken": "query-tok-5501",
+    "progress": 40,
+    "total": 100
+  }
+}
+```
 
-让 AI 帮你整理文件夹、读代码库、生成报告。MCP 让 AI 能直接操作文件，不用你手动复制粘贴内容。
+进度消息属于单向通知，Client 无需逐条回执，收到后可以直接在前端界面更新进度指示条。
 
-**场景四：第三方 API 集成**
+### 2. 工具调用的正常响应
 
-比如调地图 API 查路线、调日历 API 安排会议、调邮件 API 发消息。AI 不只是"纸上谈兵"，能真正动手做事。
+Server 执行结束后，返回与请求 `id` 对应的结果包。结果内容统一存放在 `content` 数组中，可包含纯文本、嵌入图片或内联资源，并通过 `isError: false` 表明业务成功：
 
-MCP 解决了 AI 从"能说不能做"到"能说又能做"的跨越。没有它，LLM 每次想用工具都得单独对接。有了它，工具一次适配、处处可用。
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 101,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "查询成功：华东区 1200 万元，华北区 850 万元。"
+      }
+    ],
+    "isError": false
+  }
+}
+```
 
 ---
 
-## 面试怎么答
+## 阶段四：Request 与 Notification 的语义边界
 
-**基础版（直接背）**
+在编写或排查 MCP 客户端及服务端时，混淆 Request 与 Notification 是常见的协议级错误。
 
-> MCP 是模型上下文协议，由 Anthropic 推出，解决大模型与外部工具连接的标准化问题。
->
-> 架构上分三个组件：Host 提供运行环境、Client 做通信中介、Server 暴露工具能力。
->
-> 工作流程分五阶段：意图识别 → 工具发现 → 构造请求 → 工具执行 → 结果整合。LLM 扮演决策者角色，基于 Server 暴露的工具描述选择合适的工具调用。
->
-> 通信采用 JSON-RPC 2.0 规范，实现标准化交互。
+![Request 消息与 Notification 消息结构对比](/images/content-rebuild/05e353ee409c0f41/fig-4.png)
 
-**加分版（扩展聊）**
+| 对比维度 | JSON-RPC Request | JSON-RPC Notification |
+| :--- | :--- | :--- |
+| **标识符（`id`）** | **必须包含**（数值或字符串），用于严格配对返回包 | **严禁包含**；若包含 `id`，对端会强制作为 Request 解析 |
+| **回执行为** | 对端必须返回 `result` 或 `error` 响应 | 单向发送（Fire-and-forget），对端严禁返回任何响应报文 |
+| **传输方向** | 支持双向（Client 请求 Server 工具；Server 也可通过 sampling 请求 Client 提供大模型推理） | 支持双向（如进度推送、工具列表变更通知、任务取消通知） |
+| **常见方法名** | `initialize`, `tools/list`, `tools/call`, `resources/read` | `notifications/initialized`, `notifications/progress`, `notifications/cancelled` |
 
-在基础版基础上，可以加这些：
-
-- 能画出 Host/Client/Server 的架构图，解释它们的包含和连接关系
-- 理解 MCP 和 Function Calling 的关系：MCP 是标准化的 Function Calling 框架，把原来各平台自定义的函数调用规范统一了
-- 知道实际应用：Cursor、Claude Desktop 已经集成 MCP，开发者可以自己写 MCP Server 扩展 AI 能力
-- 了解安全风险：MCP Server 安装来源可信性、运行时的权限控制、工具更新的安全性都需要考虑
+根据协议健壮性规范：当任何一方收到未知的 **Notification** 时，**必须直接忽略**，不得回传错误；如果收到未知的 **Request**，则必须返回标准错误。
 
 ---
 
-## 一句话总结
+## 异常处理：区分“协议级错误”与“工具业务级错误”
 
-MCP 的核心就是：**用标准化的三组件架构和五阶段流程，让 AI 能像 USB 插拔设备一样灵活调用外部工具**。
+面试中的高频考察点在于：工具执行异常与协议通信异常在 MCP 中应如何区分与返回？
+
+![协议层错误与工具业务层错误在 MCP 中的处理分支判定](/images/content-rebuild/05e353ee409c0f41/fig-5.png)
+
+### 1. 协议级错误（JSON-RPC Error）
+
+当消息解析失败、方法不存在、或基础 JSON 结构畸形时，Server 必须返回带有顶层 `error` 对象的报文，此时响应中不得包含 `result` 字段。
+
+| 错误码 | 错误名称 | 触发条件 |
+| :--- | :--- | :--- |
+| **-32700** | Parse error | Server 收到无法反序列化的非法 JSON 字节流 |
+| **-32600** | Invalid Request | 报文缺失 `jsonrpc`、`method` 或基础字段格式错误 |
+| **-32601** | Method not found | 请求了 Server 未声明的方法（例如在不支持 tools 的 Server 上调用 `tools/call`） |
+| **-32602** | Invalid params | 请求参数未通过基本 Schema 校验或参数结构缺失 |
+| **-32603** | Internal error | 服务端协议栈或运行时内部未捕获的严重故障 |
+
+**协议级错误报文示例**：
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 102,
+  "error": {
+    "code": -32601,
+    "message": "Method not found: tools/unknown_method"
+  }
+}
+```
+
+### 2. 工具业务级错误（Tool Execution Failure）
+
+如果客户端发送的 JSON-RPC 格式完全合法，`query_sales_data` 也成功被路由执行，但在执行 SQL 时发生了数据库报错（如 `Table 'sales_2024' doesn't exist`），此时**不能**返回 `-32603` 协议错误，而是要返回包含 `isError: true` 的标准 Result：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 103,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "SQL execution error: Table 'sales_2024' doesn't exist. Did you mean 'sales_2023'?"
+      }
+    ],
+    "isError": true
+  }
+}
+```
+
+**机制原因**：
+若返回 `-32603` 协议级错误，Client 端的协议通信层会将其作为通信异常抛出中断，宿主应用直接终止流程。而将业务错误封装在 `result` 中并标记 `isError: true`，错误文本能作为上下文完整传递回大模型，让大模型在后续推理步骤中读取具体的错误原因，修正 SQL 语句或查询参数后重新尝试调用。相关工程处理可参考 [/interview/agent-interview/agent-error-handling.md](/interview/agent-interview/agent-error-handling.md)。
+
+### 3. 超时与取消时序
+
+![请求超时与任务取消机制时序](/images/content-rebuild/05e353ee409c0f41/fig-6.png)
+
+当工具运行耗时超过 Client 设置的阈值（如等待 60 秒未收到任何结果或进度通知），或者终端用户主动点击了“停止生成”按钮时，容错时序如下：
+
+1. Client 内部定时器触发超时，或捕获到用户中断事件；
+2. Client 向 Server 发送 `notifications/cancelled` 单向通知，携带超时的 `requestId` 与取消原因：
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "method": "notifications/cancelled",
+     "params": {
+       "requestId": 101,
+       "reason": "Client timeout after 60s"
+     }
+   }
+   ```
+3. Client 注销该 `requestId` 对应的等待回调（Promise/Future）；
+4. Server 收到取消通知后，主动终止正在执行的后台子任务（如中断数据库查询或终止子进程）；若 Server 随后仍送回了延迟响应，Client 协议层静默丢弃该响应，避免数据串扰。
+
+---
+
+## 面试追问与技术边界
+
+### 追问 1：在 `notifications/initialized` 发出前，Client 可以直接调用 `tools/call` 吗？
+
+> **回答要点**：不可以。MCP 规范明确要求，在收到 `notifications/initialized` 之前，Server 不能处理除初始化外的任何请求。此时双方的能力字典与版本仍在协商中，如果在握手未确认前发送 `tools/call`，合规的 Server 必须拒绝执行并返回 `-32600 Invalid Request`。
+
+### 追问 2：进度通知（`notifications/progress`）如何防止过密推送影响性能？
+
+> **回答要点**：
+> 1. **按需开启**：只有 Client 在调用参数的 `_meta` 中显式传入了 `progressToken`，Server 才会上报进度。若未提供 Token，Server 即使有进度逻辑也不得发送通知；
+> 2. **服务端限流与采样**：长耗时任务在实现时，应对进度通知做节流控制（例如按时间间隔或关键进度节点推送），避免在快速循环中瞬间向管道灌入大量消息，导致缓冲区堆积。
+
+### 追问 3：如果 Server 发送了 Client 无法识别的通知，Client 应该报错还是忽略？
+
+> **回答要点**：必须忽略。根据 JSON-RPC 2.0 与 MCP 规范，Notification 属于单向消息，严禁对其返回错误响应；对端无法处理未知通知时应静默丢弃。只有当收到无法识别的 Request 时，才返回 `-32601 Method not found`。

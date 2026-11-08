@@ -1,283 +1,241 @@
 ---
-title: "ZeRO、DeepSpeed、FSDP 解决了什么问题？"
+title: ZeRO、DeepSpeed 与 FSDP 解决了什么问题？显存状态分片与通信代价拆解
 icon: mdi:tune-vertical
 tag:
-  - 训练原理
-  - 大模型100讲
-  - 预训练
+- 训练原理
+- 大模型100讲
+- 预训练
+description: 讲解分布式训练中 ZeRO-1/2/3 显存分片原理、集合通信算子拆解、通信量数学推导以及 DeepSpeed 与 PyTorch FSDP
+  的工程落地差异。
 ---
 
-# ZeRO、DeepSpeed、FSDP 解决了什么问题？ - 大模型分布式训练内存优化三剑客
+在大模型分布式训练中，传统的分布式数据并行（Distributed Data Parallel, DDP）曾是最常见、吞吐最高的并行方式。在 DDP 中，多张 GPU 分别处理不同批次的数据，但每张卡都必须持有一份完整的模型状态。
 
-> 一句话核心：ZeRO 通过分片消除数据并行中的冗余状态，DeepSpeed 是微软的 ZeRO 实现，FSDP 是 PyTorch 原生的 ZeRO 实现，三者共同解决「万亿参数模型装不进单卡」的内存墙问题。
+随着模型参数量增长到百亿甚至千亿，单张显卡的物理显存再也装不下完整的模型状态。我们在[《大模型训练为什么这么吃显存？》](/llm-100/training/why-high-vram.md)中讨论过混合精度训练中静态状态的构成，在[《数据并行、模型并行、流水线并行分别是什么？》](/llm-100/training/parallel-strategies.md)中介绍了基础并行分类。
 
-## 核心概念（术语表）
+零冗余优化器（Zero Redundancy Optimizer, ZeRO）以及实现它的 DeepSpeed、PyTorch FSDP（Fully Sharded Data Parallel），核心目标就是：**保留数据并行的计算逻辑，同时打破“每张卡都必须存全量状态”的限制，把模型状态切散到各个 GPU 上存储，按需通信。**
 
-- **ZeRO（Zero Redundancy Optimizer）**：微软提出的内存优化算法，通过分片模型状态（参数/梯度/优化器状态）到各 GPU，消除数据并行中的冗余存储
-- **DeepSpeed**：微软开源的深度学习优化库，实现了 ZeRO 算法，是当前最主流的 ZeRO 生产级实现
-- **FSDP（Fully Sharded Data Parallel）**：PyTorch 1.11+ 原生实现的 ZeRO，代码与 PyTorch 深度集成，HuggingFace Accelerate 支持双后端切换
-- **ZeRO-DP**：ZeRO 针对「模型状态」的优化方案，分 ZeRO-1/2/3 三个阶段，显存节省分别为 4倍/8倍/N倍
-- **ZeRO-R**：ZeRO 针对「剩余状态」（激活值、临时缓冲区、内存碎片）的优化方案
-- **混合精度训练**：前向/反向用 fp16/bf16 计算加速，更新时转回 fp32 精度保护权重
-- **内存墙（Memory Wall）**：GPU 显存增长速度远落后于模型参数增长，单卡装不下大模型的现象
-- **ALL-Gather**：分布式通信原语，所有 GPU 收集彼此的分片数据
-- **Reduce-Scatter**：分布式通信原语，将梯度聚合后分发到各 GPU
+![显存状态切分全景导览图](/images/content-rebuild/dd39b3a5cde2c005/cover.png)
+*图释：分布式训练从传统 DDP 的全量冗余存储演进至 ZeRO 的逐级状态切分，以受控的通信开销打破单卡显存墙。*
 
+---
 
-<ReadMoreLock />## 历史背景 / 来源
+## 传统数据并行的内存冗余瓶颈
 
-ZeRO 由微软 DeepSpeed 团队提出，核心论文分三版演进：
+以标准的混合精度训练（FP16/BF16 计算 + FP32 Adam 优化器）为例，设模型参数量为 $\Phi$。在反向传播和更新过程中，显卡需要常驻以下三类静态状态：
 
-- **ZeRO v1（2020）**：Memory Optimizations Toward Training Trillion Parameter Models，解决万亿参数训练的显存瓶颈
-- **ZeRO-Offload（2021）**：Democratizing Billion-Scale Model Training，将部分数据 offload 到 CPU，使单卡可训练十亿级模型
-- **ZeRO-Infinity（2021）**：Breaking the GPU Memory Wall for Extreme Scale Deep Learning，进一步将参数/梯度/优化器卸载到 NVMe，实现 GPU+CPU+NVMe 异构训练
+1. **模型参数（FP16/BF16）**：每个参数占 2 字节，合计 $2\Phi$ 字节；
+2. **梯度（FP16/BF16）**：每个参数反向传播得到的局部梯度占 2 字节，合计 $2\Phi$ 字节；
+3. **优化器状态（FP32 Adam）**：
+   - FP32 主权重：$4\Phi$ 字节（用于高精度累加更新）；
+   - 动量一阶矩：$4\Phi$ 字节；
+   - 方差二阶矩：$4\Phi$ 字节；
+   - 合计 $12\Phi$ 字节。
 
-DeepSpeed 作为 ZeRO 的工程实现，被 GPT-3（1750亿参数）、Bloom（1760亿参数）等超大模型采用。FSDP 则由 PyTorch 在 2021 年引入，作为 PyTorch 原生的 ZeRO 实现。
+因此，单副本静态状态的显存开销固定为：
+$$M_{\text{state}} = 2\Phi + 2\Phi + 12\Phi = 16\Phi \text{ 字节}$$
 
-## 工作原理 / 核心机制
+![传统 DDP 显存冗余机制示意图](/images/content-rebuild/dd39b3a5cde2c005/fig-1.png)
+*图释：DDP 中每张 GPU 拥有完全相同的静态状态副本，通信只发生在梯度同步阶段，多卡之间存在极高的内存冗余。*
 
-### 整体思路（一句话）
-数据并行中每个 GPU 都存有完整的模型状态（参数、梯度、优化器状态），ZeRO 将这三类状态分片到不同 GPU，实现「显存随 GPU 数量线性下降」。
+假设我们用 8 张 80GB 的 GPU 训练一个 13B（130 亿参数，$\Phi = 13 \times 10^9$）的模型：
+- 单份静态模型状态大小为：$13 \times 10^9 \times 16 \text{ 字节} \approx 208\text{ GB}$；
+- 集群的总显存虽然有 $8 \times 80\text{ GB} = 640\text{ GB}$，但经典 DDP 要求每一张卡都要存下这 208 GB，训练在第一步初始化时就会触发显存溢出（OOM）。
 
-### 内存消耗数学模型
-假设模型参数量为 Φ（读作 phi），训练中显存占用主要来自：
+在经典 DDP 中，8 张卡上的 Adam 优化器每一步都在做完全相同的数值运算，并保留着 8 份一模一样的 FP32 主权重和动量状态。消除这种重复存储，就是显存状态切分的切入点。
 
-| 状态类型 | 单精度(fp32) 显存 | 半精度(fp16) 显存 |
-|---------|-----------------|------------------|
-| 优化器状态（Adam 一阶/二阶矩） | 8Φ | 8Φ |
-| 梯度 | 2Φ | 2Φ |
-| 模型参数 | 4Φ | 2Φ |
-| **总计** | **16Φ** | **12Φ** |
+<ReadMoreLock />
 
-即单卡训练 Φ 参数模型，至少需要 12-16Φ 字节显存。70亿参数模型（7B）需要约 84-112GB，远超单卡。
+---
 
-### 核心步骤详解
+## ZeRO-1、ZeRO-2 与 ZeRO-3 的分级状态切分
 
-**第一步：ZeRO-1 优化器状态分片**
+ZeRO 将显存状态的切分划分为三个递进阶段：
 
-- 输入：全量模型参数 W（16Φ 字节）、全量优化器状态 O（8Φ 字节）
-- 处理：将优化器状态按 GPU 数量 N 分成 N 份，每 GPU 只存 1/N
-- 输出：单卡显存从 16Φ 降至 (4Φ + 4Φ/N) ≈ 4Φ
-- 通信：ALL-Reduce 聚合梯度，单卡通信量 = 2Φ
+![ZeRO 分级状态切分机制对比](/images/content-rebuild/dd39b3a5cde2c005/fig-2.png)
+*图释：ZeRO-1 切分优化器状态，ZeRO-2 进一步切分梯度，ZeRO-3 将参数、梯度与优化器状态彻底分片存储。*
 
-**第二步：ZeRO-2 梯度也分片**
+### 1. ZeRO-1：切分优化器状态（$P_{os}$）
+在 ZeRO-1 中，所有 GPU 仍然保存完整的模型参数（$2\Phi$）和反向传播梯度（$2\Phi$）。但是，将 Adam 优化器维护的 $12\Phi$ 字节状态平均切分成 $N$ 份（$N$ 为参与并行的 GPU 数量）。第 $i$ 张显卡只维护第 $i$ 份优化器状态。
 
-- 输入：全量梯度 G（2Φ 字节）
-- 处理：反向传播后立即执行 Reduce-Scatter，每 GPU 只保留自己负责的 1/N 梯度
-- 输出：单卡显存降至 (2Φ + 2Φ/N) ≈ 2Φ
-- 通信：使用 Reduce-Scatter（1Φ）+ ALL-Gather（1Φ），总通信量仍为 2Φ
+- **单卡显存**：$M_{\text{ZeRO-1}} = 2\Phi + 2\Phi + \frac{12\Phi}{N} = 4\Phi + \frac{12\Phi}{N}$
+- **收益极限**：当卡数 $N$ 很大时，$\frac{12\Phi}{N} \to 0$，单卡静态显存降至约 $4\Phi$ 字节。相比原始的 $16\Phi$，显存节省上限约为 75%。
 
-**第三步：ZeRO-3 参数也分片**
+### 2. ZeRO-2：切分优化器状态 + 梯度（$P_{os+g}$）
+反向传播时，每张卡虽然都需要计算前向产生的损失对参数的梯度，但更新时只有负责对应参数分片的卡才需要这份梯度。
 
-- 输入：全量参数 W（4Φ 字节）
-- 处理：前向/反向计算前 ALL-Gather 获取完整参数，计算后丢弃不属于本 GPU 的部分
-- 输出：单卡显存 = (4Φ/N)，即显存与 GPU 数量呈线性关系
-- 通信：前向 1Φ + 反向 1Φ + 梯度 Reduce-Scatter 1Φ，总通信量 = 3Φ
+因此在 ZeRO-2 中，梯度在反向传播计算出的同时，就通过算子规约并分散到目标卡上，每张卡最终只保留自己那份优化器状态所对应的梯度分片（大小为 $\frac{2\Phi}{N}$）。
 
-## 关键知识点
+- **单卡显存**：$M_{\text{ZeRO-2}} = 2\Phi + \frac{2\Phi}{N} + \frac{12\Phi}{N} = 2\Phi + \frac{14\Phi}{N}$
+- **收益极限**：当卡数 $N$ 很大时，单卡静态显存降至约 $2\Phi$ 字节（仅保留 FP16 参数本身），相比原始 $16\Phi$ 节省上限约为 87.5%。
 
-1. **ZeRO-1/2/3 显存节省比例**：4倍 / 8倍 / N倍（N=GPU数量），这是论文原文数据
-2. **ZeRO-1/2 通信量不增加**：始终为 2Φ，ZeRO-3 通信量增加 50%至 3Φ
-3. **DeepSpeed 始终保持 fp32 主权重**：即使模型用 bf16 加载，内部会创建 fp32 参数用于优化器更新
-4. **FSDP 默认用 torch_dtype 创建参数**：优化器在 bf16 精度执行，而非强制上转 fp32
-5. **混合精度经验法则**：可训参数（优化器状态）应保持 fp32，前向/反向可用低精度
-6. **ZeRO-R 三策略**：分区激活检查点 + 恒定缓冲区 + 内存碎片整理
-7. **ZeRO-Offload 划分**：GPU 负责前向/反向（计算密集），CPU 负责优化器（内存密集）
-8. **ZeRO-Infinity 支持 NVMe**：参数可 offload 到 SSD，单卡也能训练百亿参数模型
-9. **HuggingFace Accelerate 0.30.0**：对齐了 FSDP 和 DeepSpeed 的精度行为，可无缝切换
-10. **DeepSpeed ZeRO3 vs FSDP 性能**：IBM Granite 7B 模型 + 4×A100 + batch size 8，两者 MFU 和每秒词元数相近
-11. **FSDP 两种模式**：低精度模式（全部 bf16）和混合精度模式（准备/优化器 fp32）
-12. **DeepSpeed 内存开销**：少量 GPU 时，上转 fp32 可导致显存增加高达 2 倍
-13. **FSDP 更灵活**：支持用户以低精度操作 PyTorch 优化器，不强制上转
-14. **3D Parallel**：DeepSpeed 支持数据并行 + 模型并行 + 流水线并行的组合
-15. **ALL-Gather vs Reduce-Scatter**：ZeRO-1 用 ALL-Reduce（全量），ZeRO-2/3 用 Reduce-Scatter（分片）
+### 3. ZeRO-3：切分优化器状态 + 梯度 + 模型参数（$P_{os+g+p}$）
+ZeRO-3 将参数本身也均分给 $N$ 张显卡，每张卡常驻保存的模型参数仅为 $\frac{2\Phi}{N}$ 字节。在空闲和常驻阶段，没有任何一张卡持有完整的模型参数。
 
-## 应用场景
+- **单卡显存**：$M_{\text{ZeRO-3}} = \frac{2\Phi}{N} + \frac{2\Phi}{N} + \frac{12\Phi}{N} = \frac{16\Phi}{N}$
+- **收益极限**：单卡静态显存与卡数 $N$ 严格成反比。理论上只要持续增加 GPU 数量，任意规模的模型都可以装入集群显存。
 
-- **场景1**：Meta 训练 LLaMA-65B，使用 DeepSpeed ZeRO-3 + 8×80GB A100，单卡显存从约 1TB 降至约 128GB
-- **场景2**：BigScience 训练 BLOOM-176B，使用 DeepSpeed + ZeRO-3 + 384×80GB A100，耗时约 3.5 个月
-- **场景3**：IBM Granite 7B 模型吞吐量测试，4×A100 + batch size 8，对比 FSDP 和 DeepSpeed ZeRO3，MFU 和每秒词元数相近
-- **场景4**：单机单卡场景，用 ZeRO-Offload 将优化器 offload 到 CPU，单张 32GB V100 可微调 70亿参数模型
-- **场景5**：HuggingFace Accelerate 集成 DeepSpeed 和 FSDP 双后端，用户可通过配置一键切换，无需改代码
+### 算例对照：7B 模型在 8 卡（8×80GB）下的静态显存
+以参数量 $\Phi = 7 \times 10^9$（7B）为例，参数和梯度以 2 字节（FP16/BF16）计，Adam 优化器状态以 12 字节（FP32）计：
 
-## 常见误区 / 踩坑
+| 并行方案 | 参数显存 | 梯度显存 | 优化器状态显存 | 静态显存总计 | 相对 DDP 节省比例 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **传统 DDP** | $14\text{ GB}$ | $14\text{ GB}$ | $84\text{ GB}$ | $112\text{ GB}$ | 0%（单卡 80GB 无法装下） |
+| **ZeRO-1** ($N=8$) | $14\text{ GB}$ | $14\text{ GB}$ | $10.5\text{ GB}$ | $38.5\text{ GB}$ | 65.6% |
+| **ZeRO-2** ($N=8$) | $14\text{ GB}$ | $1.75\text{ GB}$ | $10.5\text{ GB}$ | $26.25\text{ GB}$ | 76.6% |
+| **ZeRO-3** ($N=8$) | $1.75\text{ GB}$ | $1.75\text{ GB}$ | $10.5\text{ GB}$ | $14.0\text{ GB}$ | 87.5% |
 
-- ❌ **误区1**：很多人以为「DeepSpeed 和 FSDP 完全等价，可以随意切换」
-  ✅ **正解**：两者在精度处理上存在差异——DeepSpeed 强制将优化器参数上转为 fp32，FSDP 默认用 torch_dtype。直接切换可能导致训练不收敛。解决方案：在 HuggingFace Accelerate 0.30.0+ 中启用 FSDP 混合精度模式
+> **注意**：上述数字仅包含**静态模型状态**。实际训练中还包含前向传播保存的中间层激活值（Activation）、通信缓冲区（Bucket）以及临时张量。如果不开启激活检查点（Activation Checkpointing），较长的训练上下文（例如 4096 或 8192）产生的激活值依然可能耗尽显存。
 
-- ❌ **误区2**：认为「ZeRO-3 一定比 ZeRO-1/2 好」
-  ✅ **正解**：ZeRO-3 显存节省最多，但通信量增加 50%。在 GPU 间带宽有限（如多机互联）时，ZeRO-1/2 可能反而更快。选型原则：带宽高选 ZeRO-3，带宽低选 ZeRO-1/2
+---
 
-- ❌ **误区3**：FSDP 损失不收敛时，只调大学习率
-  ✅ **正解**：问题可能出在精度设置。DeepSpeed 内部执行 fp32 上转，同样的学习率下可收敛；FSDP 若用 bf16 优化器则可能不收敛。正确做法：启用 FSDP 混合精度模式，或将学习率按 GPU 数量缩放
+## 通信算子与开销分析：为什么 ZeRO-1/2 不增加通信量？
 
-- ❌ **误区4**：以为「ZeRO-Offload 只卸载到 CPU」
-  ✅ **正解**：ZeRO-Infinity 支持卸载到 NVMe SSD，可突破 CPU 内存瓶颈。但数据迁移开销会显著增加训练时间
+许多人直觉上认为：将状态切散之后，频繁通信一定会成倍推高网络传输量。但通过集合通信算子的数学分解可以发现：**ZeRO-1 和 ZeRO-2 的总通信量与传统 DDP 完全相等，只有 ZeRO-3 增加了 50% 的通信量。**
 
-- ❌ **误区5**：在少量 GPU（1-2张）上使用 ZeRO-3
-  ✅ **正解**：ZeRO-3 的优势在于 N 很大时。1-2 张 GPU 时 ALL-Gather 通信占比高，可能反而不如简单数据并行。少量 GPU 推荐 ZeRO-1/2
+![集合通信算子转化与通信量拆解](/images/content-rebuild/dd39b3a5cde2c005/fig-3.png)
+*图释：Ring All-Reduce 在数学上等价于 Reduce-Scatter 与 All-Gather 的串联。ZeRO-1/2 调整了算子执行阶段，通信量与 DDP 保持一致。*
 
-- ❌ **误区6**：混合精度训练时，所有参数都用 fp16/bf16
-  ✅ **正解**：混合精度经验法则要求「可训参数保持 fp32」，即优化器状态必须用 fp32。前向/反向计算可用低精度，但权重更新必须用 fp32
+### 1. 传统 DDP 的通信基准
+在环形集合通信（Ring-based Collective Communication）中，设需要同步的张量大小为 $S$ 字节（对应 FP16 梯度的 $2\Phi$ 字节）。
+- 一次环形 `Reduce-Scatter` 算子：各节点将分块梯度规约求和，每个节点的单向发送（与接收）数据量各为 $\frac{N-1}{N} S$；
+- 一次环形 `All-Gather` 算子：各节点将各自持有的规约结果分发给所有节点，每个节点的单向发送（与接收）数据量各为 $\frac{N-1}{N} S$；
+- 传统 DDP 使用的 `All-Reduce` 算子，在实现上等价于一次 `Reduce-Scatter` 接一次 `All-Gather`。以分布式系统通用的单向发送量统计，单卡总通信量为：
+$$C_{\text{DDP}} = 2 \times \frac{N-1}{N} S \approx 2S \quad (N \gg 1)$$
+以参数字节数 $S = 2\Phi$ 为基准，单卡在一个训练步内的通信量约为 $4\Phi$ 字节。
 
-## 性能 / 复杂度
+### 2. ZeRO-1 与 ZeRO-2 的通信过程
+ZeRO-1 和 ZeRO-2 改变了算子执行的节点，但并未改变传输的总字节量：
+1. **反向传播结束时**：不执行全量 `All-Reduce`，而是调用 `Reduce-Scatter` 算子对梯度求和。每个 rank 仅接收并保留自己负责更新的那部分梯度。单卡通信量为 $\frac{N-1}{N} S \approx 2\Phi$；
+2. **优化器更新阶段**：各个 rank 分别利用本地梯度更新自己负责的那部分优化器状态与参数分片；
+3. **更新完成后**：各 rank 调用 `All-Gather` 算子，将更新后的参数分片广播给集群内的其他节点，使每张卡在下一次前向前重新获得完整的 FP16 参数。单卡通信量为 $\frac{N-1}{N} S \approx 2\Phi$。
 
-- **时间复杂度**：O(Φ) — 前向/反向计算本身与模型大小线性，ZeRO-3 增加 50% 通信开销
-- **空间复杂度**：O(Φ/N) — ZeRO-3 下显存与 GPU 数量 N 成反比
-- **通信复杂度**：O(Φ) — ZeRO-1/2 通信量 = 2Φ，ZeRO-3 = 3Φ
+两个阶段累加：
+$$C_{\text{ZeRO-1/2}} = \text{Reduce-Scatter} (2\Phi) + \text{All-Gather} (2\Phi) = 4\Phi$$
+**结论**：ZeRO-1 与 ZeRO-2 只是将原本集中在反向末期的一次 `All-Reduce`，拆分成了更新前的 `Reduce-Scatter` 与更新后的 `All-Gather`，总通信量没有增加。
 
-**与替代方案对比**：
+### 3. ZeRO-3 的通信代价推导
+ZeRO-3 在常驻阶段不保留完整的参数副本，参数必须在计算过程中按需拉取并即时丢弃：
+
+![ZeRO-3 动态通信与参数生命周期](/images/content-rebuild/dd39b3a5cde2c005/fig-4.png)
+*图释：ZeRO-3 在前向与反向逐层按需拉取全量参数并立即释放，反向计算后通过 Reduce-Scatter 聚合梯度分片。*
+
+1. **前向传播阶段**：当计算推进到第 $L$ 层时，各卡调用一次 `All-Gather`，从其他卡拉取该层的参数分片并拼装成完整参数。执行完前向计算后，**立刻释放非本地参数**。前向全模型累计拉取量为 $\frac{N-1}{N} S \approx 2\Phi$；
+2. **反向传播阶段**：计算推进到第 $L$ 层反向时，由于前向拉取的参数已被释放，各卡必须再次调用 `All-Gather` 重新拉取该层参数来计算梯度。反向累计拉取量为 $\frac{N-1}{N} S \approx 2\Phi$；
+3. **梯度同步阶段**：第 $L$ 层梯度算完后，调用 `Reduce-Scatter` 将梯度分片累加并分散到负责该分片的卡上，非本地梯度立刻释放。梯度同步累计量为 $\frac{N-1}{N} S \approx 2\Phi$；
+4. **参数更新阶段**：各卡只更新本地维护的参数分片，无需跨卡通信。
+
+总通信量核算：
+$$C_{\text{ZeRO-3}} = 2\Phi (\text{前向拉取}) + 2\Phi (\text{反向拉取}) + 2\Phi (\text{梯度规约}) = 6\Phi$$
+
+对比基准：
+$$\frac{C_{\text{ZeRO-3}}}{C_{\text{DDP}}} = \frac{6\Phi}{4\Phi} = 1.5$$
+**结论**：ZeRO-3 的总通信量相比 DDP 增加了 50%。在跨机带宽受限的环境中（例如缺少高速 RoCE/InfiniBand 网络，仅有普通千兆/万兆以太网），ZeRO-3 频繁的参数通信很容易成为整机吞吐的严重瓶颈。
+
+---
 
-| 方案 | 显存 | 通信量 | 适用场景 |
-|------|------|--------|----------|
-| 普通数据并行 (DDP) | 12-16Φ | 2Φ | Φ < 单卡容量 |
-| ZeRO-1 | 4Φ | 2Φ | 多 GPU + 中等模型 |
-| ZeRO-2 | 2Φ | 2Φ | 多 GPU + 中等模型 |
-| ZeRO-3 | Φ/N | 3Φ | 多 GPU + 超大模型 |
-| 模型并行 (Megatron) | Φ/N | 高 | 超大模型 + NVLink |
+## ZeRO-Offload：异构计算与显存权衡
 
-**临界点**：
-- Φ < 单卡容量：普通 DDP 即可
-- Φ > 单卡容量：选 ZeRO-1/2（通信不增）
-- Φ >> 单卡容量：选 ZeRO-3（显存线性下降）
-- 多机场景：先评估 NVLink/InfiniBand 带宽，低带宽优先 ZeRO-1/2
+在单张或少量显卡场景下，即使开启 ZeRO-2/3，显存可能依然不足以支撑超大模型。ZeRO-Offload 引入了 CPU 主存来分担压力。
 
-**性能数字**：
-- DeepSpeed ZeRO-3 训练 OPT-175B：使用 400×80GB A100，MFU 约 52%
-- FSDP vs DeepSpeed 吞吐对比：IBM Granite 7B + 4×A100，两者每秒词元数相近
-- ZeRO-Infinity 单卡训练百亿参数：相比纯 GPU 训练，训练速度降低 10-100 倍，但突破显存限制
-
-## 与相关概念的区别
-
-### vs 模型并行（Tensor Parallel / Pipeline Parallel）
-
-- **内存维度**：模型并行将单层参数拆分到多卡，ZeRO 将参数/梯度/优化器状态分片到各卡
-- **通信维度**：模型并行通信发生在层间（前向/反向），ZeRO 通信发生在 All-Gather 时
-- **粒度维度**：模型并行粒度细（单层），ZeRO 粒度粗（整个模型）
-- **怎么选**：单层参数超单卡选模型并行，整个模型超单卡选 ZeRO；超大模型两者结合（3D Parallel）
-
-### vs 梯度累积（Gradient Accumulation）
-
-- **原理维度**：梯度累积在逻辑 batch 层面工作，不减少物理显存占用；ZeRO 从根本上减少每个 GPU 的存储
-- **兼容性维度**：梯度累积可与 ZeRO 叠加使用，进一步放大有效 batch size
-- **通信维度**：梯度累积不增加通信；ZeRO-3 增加通信
-- **怎么选**：batch size 不足时用梯度累积；显存不足时用 ZeRO
-
-### vs CPU Offload（PyTorch DeepSpeed Offload）
-
-- **显存维度**：CPU Offload 将数据卸载到 CPU 内存，彻底释放 GPU 显存；ZeRO 仅分片不卸载
-- **速度维度**：Offload 引入 PCIe 带宽瓶颈，训练速度可能降低数倍；ZeRO 通信可被计算覆盖
-- **精度维度**：两者都支持混合精度，DeepSpeed Offload 同样保持 fp32 主权重
-- **怎么选**：显存严重不足且训练时间充裕选 Offload；显存勉强够选 ZeRO
-
-## 进阶 / 面试加分项
-
-- **最新进展**：DeepSpeed 已支持 ZeRO-3 + NVMe Offload 的组合（ZeRO-Infinity），Meta 最新训练框架完全基于此；PyTorch FSDP2（完全分片优化）正在开发中，将提供更细粒度的控制
-- **业界争议**：FSDP 和 DeepSpeed 在小规模（<8 GPU）场景下的最优配置尚无定论；HuggingFace Accelerate 虽已对齐行为，但用户仍需理解底层差异才能正确调参
-- **一句话送给候选人**：ZeRO 的本质是「用通信换内存」，记住 ZeRO-1/2 不增加通信、ZeRO-3 增加 50% 这两个数字，面试就能答对 80% 的问题
-
-
-## 面试如何回答
-
-
-### 🟢 ZeRO 是什么？它解决了什么问题？
-
-**回答要点**：
-
-ZeRO（Zero Redundancy Optimizer）是微软提出的显存优化算法，解决「大模型装不进单卡」的问题。数据并行中每个 GPU 都存有完整的模型状态（参数、梯度、优化器状态），ZeRO 将这三类状态分片到不同 GPU，消除冗余存储。核心原理：用通信换内存。具体来说，ZeRO-1 分片优化器状态，显存节省 4 倍；ZeRO-2 额外分片梯度，节省 8 倍；ZeRO-3 再分片参数，显存随 GPU 数量线性下降。举例：训练 70 亿参数模型，普通 DDP 需要约 84GB 显存，ZeRO-3 用 8 张 GPU 时每卡仅需约 10.5GB。
-
-
-### 🟡 ZeRO-1、ZeRO-2、ZeRO-3 的区别是什么？请从显存节省、通信量、适用场景三个维度回答。
-
-**回答要点**：
-
-三个阶段的分片粒度不同：
-
-1. **显存节省**：ZeRO-1 分片优化器状态，节省约 4 倍；ZeRO-2 额外分片梯度，节省约 8 倍；ZeRO-3 再分片模型参数，显存与 GPU 数量 N 呈线性关系，可节省 N 倍。
-
-2. **通信量**：ZeRO-1/2 的通信量 = 2Φ（与普通 DDP 相同），因为优化器和梯度的通信可被计算覆盖；ZeRO-3 通信量 = 3Φ，增加 50%，因为前向和反向各需要一次 ALL-Gather 收集参数。
-
-3. **适用场景**：ZeRO-1/2 适合多 GPU + 中等模型（参数量级在几十亿），因为通信不增加；ZeRO-3 适合超大模型（参数量级在百亿以上），当显存不足且 GPU 间带宽充足时使用。简单记忆：显存不够选 ZeRO-3，通信带宽不够选 ZeRO-1/2。
-
-
-### 🟡 DeepSpeed 和 FSDP 有什么区别？为什么同样的配置一个能收敛、一个不能？
-
-**回答要点**：
-
-DeepSpeed 是微软的 ZeRO 实现，FSDP 是 PyTorch 原生的 ZeRO 实现，两者在精度处理上存在关键差异。
-
-DeepSpeed 的设计哲学是「始终将主权重保持为 fp32」，即使模型用 bf16 加载，内部也会创建 fp32 优化器状态。FSDP 默认使用 torch_dtype 创建参数，优化器可以在 bf16 精度执行。
-
-这导致：当学习率相同时，DeepSpeed 的 fp32 优化器可以收敛，而 FSDP 的 bf16 优化器可能不收敛。解决方案有两个：一是将 FSDP 的学习率按 GPU 数量缩放（4 GPU 则学习率×4）；二是启用 FSDP 混合精度模式（HuggingFace Accelerate 0.30.0+ 已对齐行为）。
-
-另一个差异：少量 GPU 时，DeepSpeed 的全量 fp32 上转可能使显存增加高达 2 倍，而 FSDP 更灵活，支持用户以低精度操作优化器。
-
-
-### 🟡 什么是混合精度训练？为什么可训参数必须保持 fp32？
-
-**回答要点**：
-
-混合精度训练是一种利用低精度加速计算、同时保护模型精度的技术。具体做法：准备两套模型状态——fp32 类型的优化器状态和模型参数，以及 fp16/bf16 类型的计算参数。在前向传播和反向传播时使用 fp16/bf16 进行计算（前向/反向是计算密集，低精度可加速）；在参数更新时，将梯度与学习率相乘后更新到 fp32 类型的模型状态上。
-
-为什么要保持可训参数为 fp32？因为 fp32 的动态范围和精度远高于 fp16/bf16。以 fp16 为例：指数位只有 5 位，尾数位只有 10 位，累加多个小梯度时会出现「舍入误差」和「下溢」问题，导致训练不收敛。而 fp32 有 8 位指数和 23 位尾数，精度高出约 1000 倍。所以经验法则：可训参数（优化器状态）必须保持 fp32，前向/反向计算可用低精度。
-
-
-### 🔴 ZeRO-Offload 和 ZeRO-Infinity 解决了什么问题？它们与 ZeRO-3 的关系是什么？
-
-**回答要点**：
-
-ZeRO-Offload 和 ZeRO-Infinity 解决的是「即使分片也装不下」的问题，即单 GPU 显存或单台机器内存仍然不足的场景。
-
-ZeRO-Offload 的核心思路是「计算密集型放 GPU，内存密集型放 CPU」。将优化器状态和参数更新卸载到 CPU，GPU 负责前向和反向传播。这样单张 32GB V100 也能微调 70 亿参数模型。代价是 CPU-GPU 通信增加训练时间。
-
-ZeRO-Infinity 更进一步，支持将参数、梯度、优化器卸载到 NVMe SSD，实现 GPU+CPU+NVMe 三级异构存储。当 GPU 显存和 CPU 内存都不够时，可以借助 SSD 的容量。代价是 SSD 带宽远低于内存和显存，训练速度可能降低 10-100 倍。
-
-三者关系：ZeRO-3 是基础（GPU 内分片），ZeRO-Offload 是 CPU offload（内存扩展），ZeRO-Infinity 是 NVMe offload（容量扩展）。实际使用中常组合：ZeRO-3 + Offload 以在有限硬件上训练超大模型。
-
-
-### 🔴 在 8 张 GPU 上训练一个 130 亿参数模型，请给出 ZeRO 阶段选择和理由。
-
-**回答要点**：
-
-先算显存需求：130 亿参数（13B）按 fp16 计算约 26GB（2字节/参数），加上梯度 26GB、优化器状态 104GB（Adam 需要 8 字节/参数），总计约 156GB。8 张 80GB A100 总显存 640GB，理论上每卡 80GB 足够，但实际还有激活值、临时缓冲区开销。
-
-**推荐配置：ZeRO-2 + 激活值 checkpointing**。
-
-理由：
-1. ZeRO-2 将显存降至约 52GB/卡（优化器 13GB + 梯度 13GB + 参数 26GB），相比 ZeRO-3 的 ALL-Gather 开销更小
-2. 启用激活值 checkpointing（ZeRO-R 的一部分），将激活值从显存转移到计算（约 50% 显存节省）
-3. 如果显存仍不足，再切换到 ZeRO-3
-
-为什么不直接用 ZeRO-3？ZeRO-3 的通信量比 ZeRO-2 多 50%（3Φ vs 2Φ），在前向和反向传播中各需要一次 ALL-Gather。130 亿参数模型的分片通信量很大，如果 GPU 间带宽不足（如多机场景），可能反而更慢。ZeRO-2 在通信和显存之间取得平衡。
-
-
-### 🟢 FSDP 和 DDP（DistributedDataParallel）有什么区别？
-
-**回答要点**：
-
-DDP（DistributedDataParallel）是最基础的数据并行，每个 GPU 都保存完整的模型副本，通过 All-Reduce 同步梯度。FSDP（Fully Sharded Data Parallel）本质上是 DDP + ZeRO-3 的结合，在 DDP 的基础上增加了参数分片。
-
-核心区别：
-1. **显存占用**：DDP 每 GPU 存完整模型，FSDP 每 GPU 只存 1/N（N=GPU数量）
-2. **通信模式**：DDP 用 All-Reduce 同步梯度（每 GPU 收到完整梯度），FSDP 用 Reduce-Scatter 聚合梯度后分发（每 GPU 只收到自己负责的部分）
-3. **通信量**：FSDP ZeRO-3 的参数 All-Gather 通信量比 DDP 多约 50%
-
-简单记忆：DDP 是「存全量、多通信」，FSDP 是「存分片、换通信」。当模型能装进单卡时用 DDP（简单高效）；当模型装不下时用 FSDP（以通信换内存）。FSDP 在 PyTorch 1.11+ 作为 torch.distributed.fsdp 模块提供。
-
-
-### 🟡 训练 1000 亿参数模型，需要多少 GPU？ZeRO 能帮我们节省多少？
-
-**回答要点**：
-
-先算显存需求：1000 亿参数（100B），fp16 存储需要 200GB 梯度，加上 fp32 优化器状态 800GB，仅模型状态就约 1TB。加上激活值、中间计算，保守估计需要 1.5-2TB 显存。
-
-**不用 ZeRO**：单卡肯定不行。假设用 8×80GB A100 = 640GB，总显存不足。
-
-**用 ZeRO-3 + 8 GPU**：每卡显存 = (200GB 梯度 + 800GB 优化器 + 200GB 参数) / 8 = 150GB，仍超 80GB。
-
-**用 ZeRO-3 + 16 GPU**：每卡 = 1TB / 16 ≈ 62.5GB，刚好够。
-
-**用 ZeRO-3 + 32 GPU**：每卡 = 1TB / 32 ≈ 31.25GB，非常充裕。
-
-总结：1000 亿参数模型，至少需要 16 张 80GB GPU 才能用 ZeRO-3 装下。如果只有 8 张 GPU，则需要额外启用 ZeRO-Offload 将优化器卸载到 CPU，或使用 ZeRO-Infinity 卸载到 NVMe。ZeRO 的价值：让显存需求从 O(Φ) 降到 O(Φ/N)，使得万亿参数模型的训练从「不可能」变成「可能但需要很多卡」。
-
+![ZeRO-Offload 数据流与异构分工](/images/content-rebuild/dd39b3a5cde2c005/fig-5.png)
+*图释：GPU 负责高算力消耗的前向与反向计算，CPU 负责承载大容量优化器状态并完成参数更新。*
+
+### 1. 计算密集与内存密集的解耦
+训练过程中不同环节的计算强度差异巨大：
+- **前向与反向传播**：主要由矩阵乘法（GEMM）构成，计算量与批次大小、序列长度和模型参数量成正比，计算强度极高，必须在 GPU 上执行；
+- **优化器更新（Adam）**：主要是逐元素向量运算，计算复杂度为 $O(\Phi)$，计算强度很低，但需要维护庞大的 FP32 状态（$12\Phi$ 字节）。
+
+ZeRO-Offload 将计算强度低的优化器更新和状态卸载到主机 CPU 内存：
+1. GPU 负责前向与反向计算；
+2. 反向传播产出 FP16 梯度后，将其通过 PCIe 总线传给 CPU 内存；
+3. CPU 内存驻留 FP32 优化器状态，利用 CPU 多核指令集执行 Adam 更新，生成新的 FP16 权重；
+4. 新权重再通过 PCIe 回传给 GPU 进行下一步训练。
+
+### 2. 通信隐藏与硬件瓶颈
+PCIe 带宽（PCIe 4.0 x16 双向约 64 GB/s）远低于显存带宽（H100/A100 超过 1.5~3 TB/s）。为了避免 PCIe 传输导致 GPU 闲置，实现中通常利用 CUDA Stream 与异步拷贝将梯度上传、反向计算和权重下发进行流水线重叠。
+
+**生效边界**：只有当 GPU 反向计算耗时大于或接近 PCIe 传输耗时时，数据搬运开销才能被有效掩盖。如果批次过小导致 GPU 计算速度极快，系统吞吐就会受制于 PCIe 传输和 CPU 优化器计算速度。
+
+---
+
+## 工程实现对比：DeepSpeed ZeRO 与 PyTorch FSDP
+
+在当前大模型训练工程中，微软开源的 **DeepSpeed** 与 PyTorch 原生的 **FSDP** 是两套最常用的状态分片实现。
+
+![DeepSpeed 与 PyTorch FSDP 架构实现对比](/images/content-rebuild/dd39b3a5cde2c005/fig-6.png)
+*图释：DeepSpeed 采用配置化与全局引擎封装，FSDP 深度契合 PyTorch 的 Module 树状结构并支持细粒度嵌套封装。*
+
+### 1. 核心架构与设计取向
+- **DeepSpeed**：通过统一的 JSON 配置文件驱动，将模型、优化器和数据加载器打包封装至全局 Engine 中。DeepSpeed 倾向于将模型参数拉平为扁平张量（Flattened Tensor）来管理通信 Bucket。其生态包含 ZeRO-Offload、ZeRO-Infinity 以及流水线并行，开箱即用度高。
+- **PyTorch FSDP**：深度集成在 PyTorch 的 `nn.Module` 层级体系中。它采用嵌套包装（Nested Wrapping）机制，以子模块（如单个 TransformerBlock）为单元建立分片。与 PyTorch 2.x 的 `torch.compile`、原生混合精度以及检查点机制集成更平滑。
+
+### 2. 混合精度配置的常见陷阱
+
+| 对比维度 | DeepSpeed (ZeRO-2/3) | PyTorch FSDP | 实践注意事项 |
+| :--- | :--- | :--- | :--- |
+| **主权重维护机制** | 优化器内部自动维护一套 FP32 精度的主权重，即使输入参数是 FP16/BF16。 | 由用户的 `MixedPrecision` 配置决定。若未显式指定，可能直接以参数类型跑优化器。 | 在 FSDP 中跑混合精度时，需显式配置 `reduce_dtype` 或保留 FP32 优化器主权重，防止精度下溢。 |
+| **参数切分粒度** | 展平的大缓冲区（Flattened Buffer），按字节大小划界切分。 | 树状模块嵌套切分（Nested Module Wrapping），以配置的 Layer 为粒度。 | FSDP 必须配置合理的 `auto_wrap_policy`，若只包最外层，每次前向都会退化为拉取整个模型的参数。 |
+| **通信与计算重叠** | 基于 Bucket 累积梯度，达到设定字节阈值触发一次规约通信。 | 通过 CUDA Event 与反向 Hook 挂钩计算图，支持 `backward_prefetch`。 | 在显存紧张时，FSDP 需调优 `limit_all_gathers=True`，防止通信预取过多块导致显存尖刺。 |
+
+### 3. 可运行的 FSDP 配置样例
+以下代码展示了如何在标准 PyTorch 环境中配置基于 Transformer 层的嵌套包装 FSDP（对应 ZeRO-3 策略）：
+
+```python
+import functools
+import torch
+import torch.nn as nn
+from torch.distributed.fsdp import (
+    FullyShardedDataParallel as FSDP,
+    MixedPrecision,
+    ShardingStrategy,
+    BackwardPrefetch,
+)
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from transformers.models.llama.modeling_llama import LlamaDecoderLayer
+
+def setup_fsdp_model(model: nn.Module) -> FSDP:
+    # 1. 配置混合精度：参数与计算使用 BF16，梯度通信累加保持 FP32 精度
+    mixed_precision_policy = MixedPrecision(
+        param_dtype=torch.bfloat16,       # 前向与反向中的张量精度
+        reduce_dtype=torch.float32,       # 梯度 Reduce-Scatter 累积精度
+        buffer_dtype=torch.bfloat16,      # 模块内部持久 buffer 精度
+    )
+
+    # 2. 配置嵌套包装策略：以单个 LlamaDecoderLayer 为单元进行分片
+    # 这样前向与反向可以逐层拉取与释放参数，避免一次性拉取整个模型
+    llama_wrap_policy = functools.partial(
+        transformer_auto_wrap_policy,
+        transformer_layer_cls={LlamaDecoderLayer},
+    )
+
+    # 3. 构造 FSDP 模型（FULL_SHARD 对应 ZeRO-3 全切分）
+    fsdp_model = FSDP(
+        model,
+        auto_wrap_policy=llama_wrap_policy,
+        mixed_precision=mixed_precision_policy,
+        sharding_strategy=ShardingStrategy.FULL_SHARD,
+        backward_prefetch=BackwardPrefetch.BACKWARD_PRE, # 预取上一层参数以重叠通信与计算
+        device_id=torch.cuda.current_device(),
+        limit_all_gathers=True,                         # 限制前向预取数量，防止显存峰值溢出
+    )
+    return fsdp_model
+```
+
+---
+
+## 检验自测
+
+完成学习后，可通过以下问题检验对显存切分机制的掌握情况：
+
+1. **状态跟踪**：在 ZeRO-3 下执行一次完整的前向与反向传播，某一个特定的 Transformer 层权重一共被全量拉取（All-Gather）了几次？分别在什么时候拉取？计算完后为什么需要立即释放？
+2. **通信核算**：为什么说 ZeRO-1 和 ZeRO-2 相比经典 DDP 没有增加总通信量？增加的 50% 通信量具体发生在 ZeRO-3 的哪个阶段？
+3. **架构分析**：在多机多卡训练中，若机内卡间为 NVLink（数百 GB/s），机间仅为普通千兆或万兆以太网，全集群启用 ZeRO-3 会遇到什么瓶颈？通常如何解决？
+
+<details>
+<summary>自测参考思路</summary>
+
+1. **状态跟踪**：共被拉取 2 次。第一次在前向传播计算该层输出时拉取，算完后丢弃非本地分片以节省激活值并行的显存空间；第二次在反向传播计算该层输入梯度与权重梯度时重新拉取，梯度算完后通过 Reduce-Scatter 分发回目标卡并再次丢弃全量参数。
+2. **通信核算**：经典 DDP 的 All-Reduce 在数学上等同于 Reduce-Scatter（梯度规约）加 All-Gather（梯度分发），单卡总传输量为 $2S$。ZeRO-1/2 只是将前向反向完成后的 Reduce-Scatter 与参数更新后的 All-Gather 分开执行，总量依旧为 $2S$。ZeRO-3 在前向拉取参数（$S$）、反向拉取参数（$S$）、反向规约梯度（$S$），总计 $3S$，相对 DDP 的 $2S$ 增加了 50% 的跨卡传输开销。
+3. **架构分析**：ZeRO-3 逐层 All-Gather 和 Reduce-Scatter 会频繁跨节点传输大张量，低速机间网络将导致 GPU 核心长期处于通信等待状态，算力利用率（MFU）大幅下降。常见做法包括：采用混合切分（节点内采用 ZeRO-3，节点间保持 ZeRO-1 或传统数据并行，如 ZeRO++ / Hybrid Sharding），或结合流水线并行/张量并行来减少跨机通信频次。
+</details>

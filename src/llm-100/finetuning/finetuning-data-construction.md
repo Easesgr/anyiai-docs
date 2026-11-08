@@ -1,221 +1,347 @@
 ---
-title: "微调数据应该怎么构造？"
+title: 微调数据应该怎么构造？从格式规范到清洗去重
 icon: mdi:tune-vertical
 tag:
-  - 微调与对齐
-  - 大模型100讲
-  - RLHF
+- 微调与对齐
+- 大模型100讲
+- RLHF
+description: 微调数据决定了大模型的指令依从性与输出规范。本文详解单轮三元组与多轮ChatML格式、清洗去重管线及负例控制，附可运行脚本与实操练习。
 ---
 
-# 微调数据应该怎么构造？ - 一句话定位
+在进入模型训练之前，我们首先需要搞清楚微调数据在工程上究竟要解决什么问题。在上一讲 [/llm-100/finetuning/pretraining-vs-finetuning.md](/llm-100/finetuning/pretraining-vs-finetuning.md) 中，我们已经明确：预训练赋予了模型通用的语言概率分布与基础世界知识，而监督微调（Supervised Fine-Tuning, SFT）的核心目标则是调整模型的交互行为、建立对指令格式的依从性，并对齐业务所需的输入输出结构。
 
-> 微调数据决定大模型微调效果的天花板。构造一份合格数据集需要走完获取 → 清洗 → 质量控制 → 格式化 → 扩增五步流程，且格式必须与目标模型的能力结构（基础指令 / Function calling / 混合推理）严格对齐。
+监督微调并不是向模型参数中强行写入实时业务事实的可靠途径。如果训练数据充斥噪声、字段混乱或指令高度雷同，微调后的模型不仅无法稳定输出指定格式，反而容易学到错误的推理模板甚至加剧事实幻觉。本文以构建一个“SQL 诊断与调优助手”为例，从单轮三元组、多轮 ChatML 结构、质量评估、清洗去重流水线到负例样本设计，逐步拆解微调数据的构建标准。
 
-## 核心概念（术语表）
-- **微调（Fine-tuning）**：在预训练模型基础上用领域专属数据进行二次训练，让模型在保留通用能力的同时获得特定任务能力，是医疗、法律、金融等垂直领域的标配手段。
-- **PII（个人识别信息）**：姓名、身份证号、电话号码等敏感字段，是数据清洗中必须匿名化或移除的核心目标，社交平台迁移数据时尤其关键。
-- **Alpaca 格式**：基础指令微调格式，由 instruction / input / output 三字段构成，结构简单，适合单轮指令任务。
-- **ShareGPT 格式**：多角色多轮对话格式，包含 system / user / assistant 三种 role，支持复杂对话、角色扮演和工具调用场景。
-- **特殊标记符（Special Tokens）**：如 ``、``、``，用于标记消息起止和角色身份，定义存储在模型的 tokenizer_config.json 中，错一字符模型就识别不出边界。
-- **tool_schema**：描述可用工具的 JSON Schema，定义函数名、description、参数类型与必填项，是 Function calling 微调的核心数据载体。
-- **reasoning_content**：模型思考过程字段（如 Qwen3 混合推理），与最终回复分离，训练时通过 `<think>...` 标签包夹呈现。
-- **CAMEL 数据集（camel-ai/ai_society）**：托管在 Hugging Face 上的大规模对话数据集，包含约 22.9 万条结构化多轮对话，是角色扮演微调的事实标准素材。
-- **Llama_factory**：统一数据格式转换的开源工具，可将原始数据处理为多种模型特定的微调格式，省去手写转换脚本。
-- **Dify workflow**：LLM 编排工具，可串联 Prompt 生成、数据扩增、质量过滤等节点，自动化构造数据集。
+![微调数据构造与清洗工程流水线架构图](/images/content-rebuild/0e2f9731bc5dcc71/cover.png)
 
+上图展示了微调数据工程的完整流向：收集到的原始语料经过格式规范化、规则过滤、SimHash 去重与安全样本配比后，输出为训练器能够稳定解析的序列集合。
 
-<ReadMoreLock />## 历史背景 / 来源
-- 数据构造从「凑数量」升级到「匹配模型能力结构」。早期 Alpaca 只需 instruction / input / output 三字段；进入 2024 年后，随着 Qwen3 等模型同时具备 Function calling 与混合推理能力，数据格式必须承载 tool_schema（XML 标签 + JSON）和 reasoning_content（`<think>` 段），数据构造升级为多能力协同训练。
-- **2024 年 12 月，AWS 中国博客**发布《炼石成丹：大语言模型微调实战系列（一）数据准备篇》，系统性梳理了「获取 → 扩增 → 清洗 → 质量评估 → 标准化和格式化」全流程。
-- **2025 年 7 月，知乎专栏**《大模型学习路线（二十二）如何构造微调数据集》聚焦 Qwen3 等新模型，提出针对 Function calling 与混合推理场景的具体数据格式构造方案。
-- **CAMEL 项目**由 Hugging Face 托管，提供约 22.9 万条结构化多轮对话，是角色扮演微调的事实标准数据集。
+---
 
-## 工作原理 / 核心机制
+### 单轮数据规范：Instruction 与 Input 的职责切分
 
-**整体思路**：微调数据构造的目标不是堆量，而是让「数据格式、内容分布、信号密度」三者同时匹配目标模型的能力边界和最终任务场景。
+单任务微调中最常见的组织方式是 Alpaca 风格的三元组或二元组结构。很多初学者容易混淆任务指令（Instruction）与输入材料（Input）的边界，导致拼出的样本逻辑混乱。
 
-**输入 / 输出**：输入是原始数据（来自互联网、生产、社交平台、公开数据集等），输出是符合目标模型微调脚本格式要求的标准化训练集，通常以 JSONL 或 Parquet 存储。
+这三个字段的明确分工如下：
+- **Instruction（任务要求）**：描述希望模型执行的操作规则，即“做什么”。例如：“为以下慢查询 SQL 提供基于覆盖索引的优化建议”。
+- **Input（输入实体或上下文）**：完成该操作所依赖的外部材料，即“基于什么材料做”。例如具体的 SQL 语句和表结构 DDL。如果任务本身自包含（例如“解释什么是数据库事务的隔离级别”），则该字段应设置为空字符串。
+- **Output（预期输出）**：模型针对上述指令和上下文应当生成的标准解答，也就是模型训练时的监督目标。
 
-**核心步骤详解**：
+![Alpaca格式单轮指令三元组结构与模板映射示意图](/images/content-rebuild/0e2f9731bc5dcc71/fig-1.png)
 
-**第一步：数据获取（四条主路径）**
-- 互联网抓取 + 人工改写：用 Python 的 requests 和 BeautifulSoup 库抓取，社交网站数据标准化、清洗简单；小说网站需做段落分割和对话提取。优点是量大，缺点是清洗繁琐。
-- 生产数据 + 人工改写：线上 LLM 回答往往缺乏真实人类对话特征，需重写其中约 30% 的模型拒绝回答样本，并加入情感表达避免「官腔」。典型改写：「我无法回答这个问题，因为它涉及到个人隐私」→「我理解你的好奇心，但这个问题涉及到个人隐私。也许我们可以聊聊别的有趣话题？比如你最近看过什么好电影吗？」
-- 现有社交平台数据迁移：使用 WeChatMsg 等开源工具导出聊天记录，但必须处理 PII 信息。
-- 公开数据集：Kaggle 托管超 50,000 个公共数据集；亚马逊开放数据平台覆盖公共交通、航天、生态资源；UCI 包含 100+ 按机器学习问题类型分类的标准数据集；CAMEL 含约 22.9 万条结构化多轮对话。
+如上图所示，当数据被喂给分词器前，需要通过 Prompt 模板拼接为平铺文本。以下是典型的组装逻辑：
 
-**第二步：数据清洗（六类操作）**
-- 移除或匿名化 PII（姓名、身份证号、电话）。
-- 纠正拼写和语法错误（典型代码示例：`teh` → `the`，`dont` → `don't`）。
-- 去除 HTML 标签、特殊字符和无关内容（含 URL）。
-- 过滤广告、垃圾信息等干扰内容。
-- 删除无关或重复内容。
-- 确保对话的连贯性和逻辑性。
+```python
+def format_alpaca_sample(instruction: str, input_text: str = "") -> str:
+    """
+    将结构化字段拼接为统一的提示词文本
+    """
+    clean_inst = instruction.strip()
+    clean_input = input_text.strip()
+    
+    if clean_input:
+        return (
+            f"Below is an instruction that describes a task, paired with an input that provides further context. "
+            f"Write a response that appropriately completes the request.\n\n"
+            f"### Instruction:\n{clean_inst}\n\n"
+            f"### Input:\n{clean_input}\n\n"
+            f"### Response:\n"
+        )
+    return (
+        f"Below is an instruction that describes a task. "
+        f"Write a response that appropriately completes the request.\n\n"
+        f"### Instruction:\n{clean_inst}\n\n"
+        f"### Response:\n"
+    )
+```
 
-**第三步：数据集质量控制（四种方法 × 三个维度）**
-- 方法：随机抽样人工审核、统计分析（分布 / 长度 / 词频）、小规模测试微调、交叉验证。
-- 维度：移除重复和近似重复内容、过滤低质量对话、确保符合法律法规和伦理要求。
-- 实操工具：用 pandas 做描述统计（`df.describe()`），用 matplotlib 绘制对话长度分布图（50 个 bin），用 Counter 计算词频 Top 10。
+如果随意把待处理的 SQL 塞进 Instruction，或者把核心任务规则混在 Input 中，会导致模型在推理阶段无法清晰分辨“指令规则”与“操作对象”，降低模型对不同提示词句式的泛化依从能力。
 
-**第四步：数据格式化和标准化**
-- 不同模型有特定微调格式，Llama_factory 等工具可统一处理。
-- Alpaca 结构简单，适合基础指令微调；ShareGPT 支持更多角色种类，适合复杂对话与角色扮演。
-- 标准转换示例：把 `user_input` / `ai_response` 对转换为 OpenAI 格式的 messages 数组，含 system / user / assistant 三种 role。
+<ReadMoreLock />
 
-**第五步：数据扩增（五种传统方法 + 四种 LLM 方法）**
-- 传统方法：同义词替换、回译、文本生成、上下文扩展、句子重组。
-- LLM 方法（尤其适用于角色扮演）：
-  - 基于 Prompt 的数据生成：输入「生成一段医生和病人之间的对话，医生性格温和，病人有些焦虑」，LLM 输出符合要求的对话。
-  - 对话扩展：把「用户：我今天感觉不太舒服」扩展为带压力源、睡眠、症状、建议的多轮对话（5 轮以上）。
-  - 场景变换：将咖啡店对话改写为餐厅、书店等其他场景（示例：咖啡店 → 餐厅的「牛排真不错」对话）。
-  - 风格转换：将正式风格的 AI 书推荐对话改写为轻松风格（示例：Russell & Norvig 的《人工智能：一种现代方法》从「我建议您可以考虑阅读」转为「哇，说到 AI 的好书，我立马想到一本超赞的！」）。
+---
 
-**第六步：按模型能力差异化格式**
-- 基础指令格式：alpaca_zh 三段式（instruction / input / output）→ 转成 `user\n你好\nassisant\n你好，有什么可以帮到你？` 序列。
-- 带系统提示：在 user 段前插入 `system ... `。
-- 带 Function calling：在 system 段后追加 `<tools>{tool_schema JSON}</tools>`，assistant 回复内嵌 `<tool_call>{"name": ..., "arguments": ...}</tool_call>`。
-- 带推理过程：在 conversations 中加 reasoning_content 字段，最终格式以 `<think>...` 包夹思考段。
+### 多轮对话数据：ChatML 规范与特殊定界 Token
 
-## 关键知识点
-- 微调五大场景：垂直增强、任务特化、语言本地化、语气风格、安全性增强。
-- 微调数据五大流程：获取 → 清洗 → 质量控制 → 格式化 → 扩增（扩增可选）。
-- 四种数据获取路径：互联网抓+人工改写、生产数据+人工改写、社交平台迁移、公开数据集。
-- 生产数据中约 30% 是模型拒绝回答样本，必须人工改写才能进入训练集。
-- 数据清洗六目标：PII 匿名化、拼写纠错、HTML 清洗、广告过滤、去重、连贯性。
-- 质量控制四方法：随机抽样、统计分析、小规模测试、交叉验证。
-- Alpaca vs ShareGPT：前者结构简单（基础指令微调），后者多角色（复杂对话）。
-- 五种传统数据扩增：同义词替换、回译、文本生成、上下文扩展、句子重组。
-- 四种 LLM 扩增：Prompt 生成、对话扩展、场景变换、风格转换。
-- CAMEL 数据集含约 22.9 万条多轮对话，专门服务角色扮演场景。
-- Kaggle 托管超 50,000 个公共数据集；UCI 含 100+ 标准数据集。
-- 微调格式依赖特殊标记符 ``、``、user、assistant，定义见 tokenizer_config.json。
-- alpaca_zh 的 JSON 字段：instruction、input、output。
-- Qwen3 的微调序列格式：`system ... \nuser ... \nassisant ... `。
-- Function calling 训练数据需嵌入 tool_schema 在 `<tools>` 段，并在 assistant 回复中输出 `<tool_call>{json}</tool_call>`。
-- 推理数据需在 assistant 段前置 `<think>...` 包夹 reasoning_content。
+当业务需要多轮交互（如助手先诊断问题、追问索引状态，用户补充后再给出方案）时，数据通常采用基于角色（Role）的列表形式组织（如 ChatML 或 ShareGPT 格式）。
 
-## 应用场景
-- **情感陪伴 / 游戏 NPC**：使用社交平台迁移（WeChatMsg 导出聊天记录）+ LLM 扩增（Prompt 生成 + 风格转换）构造角色对话，CAMEL 提供约 22.9 万条基础素材。
-- **垂直领域问答（医疗 / 法律 / 金融）**：互联网抓取专业论坛 + Kaggle / UCI 公开数据集 + 人工改写，构造专业知识问答对，垂直增强通用模型。
-- **Function calling 智能助手**：用 tool_schema 定义工具集（如 get_weather），构造天气查询、订单查询等多场景训练数据，保留 Qwen3 混合推理能力。
-- **心理咨询 / 虚拟教师**：基于 Prompt 的 LLM 数据生成，构造医生性格温和、病人焦虑等多角色多场景对话，任务特化场景。
-- **语言本地化**：将英文语料通过回译扩增为多语言版本，训练多语言模型。
-- **安全性增强**：通过清洗 PII、过滤有害内容，训练减少模型产生不当输出的能力。
+#### 1. 结构化表示示例
 
-## 常见误区 / 踩坑
-- ❌ **数据量越大效果越好**
-  ✅ **正解**：质量优先于数量。CAMEL 仅 22.9 万条却成为角色扮演标杆，而 30% 的拒绝回答样本若不改写会显著拉低效果。
-- ❌ **直接用 LLM 生成的回答训练**
-  ✅ **正解**：LLM 回答缺乏真实人类对话特征（「官腔」、无表情），需人工改写，加入情感表达和口语化，否则模型学到的全是机器味。
-- ❌ **忽略特殊标记符差异，直接拼接 user / assistant 文本**
-  ✅ **正解**：必须严格使用 ``、`` 等标记符，定义见模型的 tokenizer_config.json，错一字符模型就识别不出消息边界，整批数据作废。
-- ❌ **Function calling 数据不带 tool_schema**
-  ✅ **正解**：必须在 system 段嵌入 `<tools>{完整 tool_schema JSON}</tools>`，否则模型不知道可调用哪些工具、参数如何填写，调用准确率断崖式下跌。
-- ❌ **推理数据混在 content 里**
-  ✅ **正解**：思考过程必须放在 reasoning_content 字段（或最终格式中的 `<think>...` 段），与最终回复分离，否则会破坏推理能力的可观测性和训练信号。
-- ❌ **数据扩增是必做步骤**
-  ✅ **正解**：扩增是可选步骤。特定领域数据充足时不必扩增；扩增不当会引入噪声，反而损害模型。CAMEL 这类数据集本身就是 LLM 扩增产物，二次扩增可能适得其反。
-- ❌ **清洗只去 HTML 不去 PII**
-  ✅ **正解**：PII 匿名化是清洗第一步，姓名 / 身份证 / 电话必须先处理，否则微调出的模型可能在推理阶段泄露用户隐私，承担法律风险。
+```json
+{
+  "messages": [
+    {"role": "system", "content": "你是一名专业的数据库工程师，只回答与 SQL 优化和索引设计相关的问题。"},
+    {"role": "user", "content": "MySQL 中联合索引 (a, b, c)，在查询 WHERE b=2 AND c=3 时能走索引吗？"},
+    {"role": "assistant", "content": "不能直接利用联合索引定位起点。因为该索引先按字段 a 排序，缺失 a 条件时无法利用 B+ 树的有序性完成根节点定位。"},
+    {"role": "user", "content": "那如果查询是 WHERE a=1 AND c=3 呢？"},
+    {"role": "assistant", "content": "可以利用索引定位到 a=1 的记录范围。对于条件 c=3，MySQL 5.6 引入的索引下推（ICP）可在存储引擎层遍历时先按 c 过滤，减少回表次数。"}
+  ]
+}
+```
 
-## 性能 / 复杂度
-- **数据清洗时间复杂度**：O(n)，n 为样本数；PII 匿名化通常采用正则匹配，O(n × m)，m 为匹配模式数（典型 m = 5-20 个 PII 模式）。
-- **数据扩增时间复杂度**：传统扩增毫秒-秒级 / 条；LLM 扩增单条约 1-5 秒，批处理 + vLLM 推理可压缩到 0.5 秒 / 条。
-- **数据格式化的 token 增长**：alpaca_zh 三字段约 50-100 tokens / 条；ShareGPT 多轮约 200-1000 tokens / 条；Function calling 含 tool_schema 后约 500-2000 tokens / 条（含工具描述）。
-- **方案对比**：
-  - 方案 A（传统扩增：同义词 / 回译）：速度毫秒-秒级，多样性受限，O(n × k)，k 为替换词数。
-  - 方案 B（LLM 扩增：场景 / 风格变换）：速度秒-分钟级，多样性高、语义保真，O(n × t / batch_size)，t 为单条生成时间。
-  - 临界点：单条扩增成本敏感时优先传统扩增；需要角色多样性和风格覆盖时必须 LLM 扩增 + 人工抽检。
-- **数据量经验值**：基础指令微调 1k-10k 条；角色扮演 5w-30w 条；Function calling 单一工具 500-2000 条，多工具组合需 1w+ 条。
+#### 2. 特殊定界 Token 的封装逻辑
 
-## 与相关概念的区别
-- **微调 vs 预训练**：
-  - 数据量：预训练 TB 级（万亿 tokens），微调 KB-MB 级（万-百万条）。
-  - 数据来源：预训练用通用语料（网页 / 书籍），微调用任务专属数据（对话 / 问答）。
-  - 目标：预训练学通用知识，微调学任务模式。
-  - 怎么选：有明确下游任务且数据充足时选微调；否则用 Prompt Engineering 或 RAG。
-- **Alpaca 格式 vs ShareGPT 格式**：
-  - 结构：Alpaca 三字段（instruction / input / output），ShareGPT 多消息数组（system / user / assistant）。
-  - 角色：Alpaca 单角色（默认助手），ShareGPT 多角色（可任意定义）。
-  - 适用：Alpaca 适合简单指令任务（翻译 / 摘要），ShareGPT 适合复杂多轮对话和角色扮演。
-  - 怎么选：基础问答用 Alpaca；对话 / 角色 / 工具调用必须 ShareGPT。
-- **传统数据扩增 vs LLM 数据扩增**：
-  - 速度：传统扩增毫秒-秒级，LLM 扩增秒-分钟级。
-  - 多样性：传统扩增限于词 / 句层面，LLM 扩增可生成全新场景和风格。
-  - 质量风险：传统扩增风险低但天花板低，LLM 扩增可能引入幻觉（需人工抽检）。
-  - 怎么选：低成本大批量用传统扩增；高质量角色扮演 / 风格覆盖必须 LLM 扩增 + 抽检。
-- **微调 vs RAG**：
-  - 知识更新：微调需重训（小时-天级），RAG 实时检索（秒级）。
-  - 数据要求：微调需 1k+ 条结构化样本，RAG 只需文档库。
-  - 成本：微调需 GPU 小时级训练，RAG 需向量库存储和检索算力。
-  - 怎么选：知识频繁更新选 RAG；任务模式稳定且需低延迟选微调。
-- **全量微调 vs LoRA / QLoRA**：
-  - 数据要求：全量微调对数据量更敏感（万级+），LoRA 千级即可见效。
-  - 工具调用准确率：全量微调对 Function calling 的工具选择准确率提升更显著（约 3-5%）。
-  - 显存：全量微调需 70B × 2 bytes × 优化器状态，LoRA 仅需模型 0.1-1% 参数。
-  - 怎么选：实验阶段或小数据用 LoRA；生产部署且数据充足用全量微调。
+语言模型在底层只接收一维的整数 ID 序列。为了让注意力计算能够准确识别发言人角色与语句起止，分词器引入了不可拆分的特殊定界符，最典型的便是 ChatML 的 `<|im_start|>` 和 `<|im_end|>`。
 
-## 进阶 / 面试加分项
-- **最新进展**：Qwen3 等具备 Function calling + 混合推理能力的模型要求数据格式同时承载 tool_schema（XML 标签 + JSON）和 reasoning_content（`<think>` 段），数据构造从单一能力训练升级为多能力协同训练。同时，Llama_factory、Dify workflow 等工具大幅降低了格式转换的工程门槛。
-- **业界争议**：是否需要全量微调 vs LoRA / QLoRA？数据质量相当时 LoRA 即可，但全量微调对 Function calling 的工具选择准确率提升更显著（约 3-5%）。CAMEL 等大规模合成数据集的「机器味」是否会被新一代微调技术（如 DPO / RLHF）部分消除？尚无定论。
-- **金句送给候选人**：「数据决定上限，模型只是逼近这个上限的工具；微调数据的格式对了，模型能力才有可能被正确激发。」
+![ChatML多轮对话格式与特殊定界Token封装机制](/images/content-rebuild/0e2f9731bc5dcc71/fig-2.png)
 
+如上图所示，每一轮发言都会被定界符包裹：
+```text
+<|im_start|>system
+你是一名专业的数据库工程师...<|im_end|>
+<|im_start|>user
+MySQL 中联合索引...<|im_end|>
+<|im_start|>assistant
+不能直接利用联合索引...<|im_end|>
+<|im_start|>user
+那如果查询是...<|im_end|>
+<|im_start|>assistant
+可以利用索引定位到...<|im_end|>
+```
 
-## 面试如何回答
+**多轮数据校验必须遵守的两条硬性约束**：
+1. **角色交替顺序**：消息序列必须满足 `system (可选且仅首位) -> user -> assistant -> user -> assistant` 的严格交替。如果出现连续两个 `user` 或连续两个 `assistant`，模型的自回归预测上下文就会混乱。
+2. **因果依赖不可中断**：计算第 $N$ 轮 Assistant 的回复损失时，前 $N-1$ 轮对话全部作为输入上下文。严禁为了缩减长度而强行删去中间轮次（例如留下第 1 轮提问和第 3 轮回答），因果链条一旦断裂，模型将无法学到正确的上下文回溯逻辑。
 
+在模型训练时，通常只有 `assistant` 区域的输出会计算交叉熵损失，用户输入和系统提示词区域会被掩码忽略，这一技术的具体计算过程见 [/llm-100/finetuning/sft-instruction-tuning.md](/llm-100/finetuning/sft-instruction-tuning.md)。
 
-### 🟢 什么是大模型微调？常见的微调场景有哪些？
+---
 
-**回答要点**：
+### 数据质量控制：多样性、难度与长度分布
 
-微调（Fine-tuning）是在预训练大模型基础上，使用特定领域的数据集进行二次训练，让模型在保留通用能力的同时获得特定任务能力的过程。常见场景分五大类：第一是垂直增强，比如把通用模型改造成医疗、法律、金融等领域的专家；第二是任务特化，如问答系统、文本分类、命名实体识别；第三是语言本地化，把以英语 / 汉语为主的模型适配到小语种；第四是语气风格调整，让输出更符合特定表达方式；第五是安全性增强，通过训练减少有害内容。典型应用包括情感陪伴、心理咨询、虚拟教师、心理占卜、游戏 NPC 等。和预训练相比，微调数据量从 TB 级降到 KB-MB 级，从通用语料转为任务专属数据。
+监督微调中，数据质量的重要性远高于单纯的数据集行数。构建数据集时，需要从以下三个维度进行把控：
 
+![微调数据集质量控制的三大核心维度](/images/content-rebuild/0e2f9731bc5dcc71/fig-3.png)
 
-### 🟢 微调数据准备的核心流程是什么？包含哪几步？
+上图直观呈现了高质量数据集在任务意图、逻辑难度和序列长度上的分布要求。
 
-**回答要点**：
+#### 1. 指令多样性（Diversity）
+如果微调集中 90% 的指令都是“请分析以下 SQL 的性能：”，模型面对“这条查询为什么变慢了？”、“帮我重写下面的语句以减少回表”等句式变体时，遵循能力就会明显下滑。构建数据时，应确保动词短语（如分析、改写、提取、校验、对比）和业务场景（单表聚合、多表连接、子查询展开）分布均衡。
 
-微调数据准备走五步流程：获取 → 清洗 → 质量控制 → 格式化 → 扩增。第一步获取有四条主路径：互联网抓+人工改写、生产数据+人工改写、社交平台迁移（如 WeChatMsg 导出）、公开数据集（Kaggle 50,000+、UCI 100+、CAMEL 22.9 万）。第二步清洗要做六件事：PII 匿名化、拼写纠错、HTML / URL 清洗、广告过滤、去重、连贯性检查。第三步质量控制用四种方法：随机抽样、统计分析（长度分布 / 词频）、小规模测试微调、交叉验证。第四步格式化和模型对齐，Alpaca 适合基础指令、ShareGPT 适合多轮对话。第五步扩增是可选步骤，必要时用同义词替换、回译或 LLM 扩增。每一步都有具体工具支持：requests/BeautifulSoup 抓取、pandas 做统计分析、Llama_factory 做格式转换、Dify workflow 做流程编排。
+#### 2. 难度梯度与多约束条件
+如果数据集全是一句话即答的简单题目，模型在面对复合要求时容易丢掉部分约束。应设计不同难度的样本梯度：
+- *基础单步任务*：“给出改写后的 SQL 语句。”
+- *复合约束任务*：“给出改写后的 SQL 语句，并在注释中标注新创建的联合索引列顺序，禁止修改现有 WHERE 条件的等值逻辑，最终以 Markdown 代码块返回。”
 
+引入显式负向约束（“禁止……”、“不要……”）能促使模型学会在生成过程中维持多维检查条件。
 
-### 🟡 微调数据有哪些获取方式？各自的优缺点是什么？
+#### 3. 长度分布控制
+- **末端被硬截断的危害**：如果数据预处理设置的 `max_length` 过小，导致很多样本的 `output` 在结尾被生硬截断，模型就会在反向传播中学习到“句子没写完直接输出终止符”的错误概率，导致线上回答频繁出现半截话。
+- **异常长样本的填充开销**：如果少数异常数据（如整段未经清理的几千行报错日志）拉长了批次序列，且没有采取动态分桶处理，会导致同一个批次内的其他短文本被大量的填充符（padding）填满，徒增显存与计算耗费。批处理分桶的具体打包策略可参阅 [/interview/llm-interview/transformer-large-dataset.md](/interview/llm-interview/transformer-large-dataset.md)。
 
-**回答要点**：
+---
 
-数据获取有四条主路径。第一条互联网抓+人工改写：社交网站数据标准化、清洗简单；小说网站需段落分割和对话提取。优点是数据量大，缺点是清洗繁琐、需要处理反爬。第二条生产数据+人工改写：用线上 LLM 回答或真实业务数据构建，优点是贴近业务，缺点是约 30% 是模型拒绝回答样本必须人工改写，且 LLM 回答有「官腔」需口语化。第三条社交平台迁移：用 WeChatMsg 等工具导出聊天记录，优点是真实人类对话特征明显，缺点是必须处理 PII 隐私。第四条公开数据集：Kaggle 50,000+ 个数据集、UCI 100+ 标准数据集、CAMEL 22.9 万条角色扮演对话，优点是即拿即用，缺点是和具体业务场景匹配度有限。实践中常组合使用，比如用 CAMEL 做基础 + 业务数据做精调。
+### 清洗去重实操：规则过滤与 SimHash 指纹
 
+原始数据进入训练集前，需要经过分阶段的清洗流水线。
 
-### 🟡 数据清洗的关键步骤和目标是什么？
+![微调数据清洗与过滤端到端流水线流程图](/images/content-rebuild/0e2f9731bc5dcc71/fig-4.png)
 
-**回答要点**：
+如上图所示，流水线依次处理格式校验、长度与字符规则过滤、SimHash 指纹去重，最后完成输出。
 
-数据清洗要解决六类问题。第一是 PII 匿名化，移除或脱敏姓名、身份证号、电话号码等敏感字段，这是合规底线。第二是拼写和语法纠错，比如「teh」改「the」、「dont」改「don't」，Python 正则代码示例：`re.sub(r'\\s+', ' ', text).strip()` 合并多余空白。第三是去除 HTML 标签、特殊字符、URL（`re.sub(r'http\S+', '', text)`）。第四是过滤广告、垃圾信息等干扰内容。第五是删除无关和近似重复内容，避免模型学到噪声。第六是确保对话连贯性和逻辑性，多轮对话尤其关键。清洗后必须做质量评估：用 pandas 的 `df.describe()` 做描述统计，用 matplotlib 绘制消息长度分布（50 个 bin），用 Counter 统计词频 Top 10，发现异常分布及时回溯。
+#### 1. 脏数据对模型造成的具体破坏
 
+![格式混乱与事实幻觉数据导致模型推理退化的对比分析](/images/content-rebuild/0e2f9731bc5dcc71/fig-5.png)
 
-### 🟡 Alpaca 和 ShareGPT 格式有什么区别？应该怎么选？
+如果数据中包含以下缺陷，将直接体现在微调后的模型表现上：
+- **无用套话残留**：“好的，作为一名AI，我为您解答……”这类固定开头会让模型失去专业角色调性。
+- **输出格式漂移**：同一个查询场景，一会儿直接给纯 SQL，一会儿包在代码块里，一会儿夹杂长篇文字。这会导致下游自动化解析脚本频繁报错。
+- **错误先验注入**：如果样本中包含“MySQL 默认存储引擎是 MyISAM”等事实错误，自回归损失会强行改变模型底层的参数连接，使模型在相关问题上出现稳定输出错误。
 
-**回答要点**：
+#### 2. 自包含清洗与 SimHash 近似去重代码
 
-Alpaca 格式是基础指令微调格式，JSON 字段三段式：`{instruction, input, output}`，结构简单，适合单轮指令任务如翻译、摘要。ShareGPT 格式是多角色多轮对话格式，消息数组含 system / user / assistant 三种 role，支持复杂对话、角色扮演和工具调用。选择标准：基础问答、文本分类用 Alpaca 即可，开发成本低；多轮对话、角色扮演、Function calling 必须用 ShareGPT，因为它能携带 system 提示词、多轮 user-assistant 交替和 tool_call 嵌套。alpaca_zh 转 Qwen3 微调序列示例：`{"instruction": "", "input": "输入：你好。", "output": "输出：你好，有什么可以帮到你？"}` → `user\n你好\nassisant\n你好，有什么可以帮到你？`。实际工程中常用 Llama_factory 统一转换。
+对于大规模数据去重，逐条对比耗时过长。SimHash 将文本特征投影为 64 位二进制指纹，指纹间的汉明距离（不同 bit 位的数量）可以近似衡量文本特征夹角。在计算指纹时，需将任务指令与输入上下文合并计算，防止“同一通用指令但处理不同数据输入”的有效样本被误删。当汉明距离小于设定的阈值（通常为 3）时，可判定两条提示文本高度相似并予以剔除。
 
+```python
+import re
+import hashlib
+from typing import List, Dict
 
-### 🟡 用 LLM 做数据扩增有哪些方法？举几个具体例子。
+def clean_text_heuristics(text: str) -> str:
+    """去除 HTML 标签、控制字符并标准化空白符"""
+    # 去除 HTML 标签
+    text = re.sub(r'<[^>]+>', '', text)
+    # 替换不可见控制字符为空格
+    text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', text)
+    # 合并多余空白符
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
-**回答要点**：
+def is_valid_sample(instruction: str, output: str) -> bool:
+    """启发式规则校验"""
+    if len(instruction) < 5 or len(output) < 5:
+        return False
+    if len(instruction) > 2048 or len(output) > 4096:
+        return False
+    
+    # 检测异常标点符号重复（防止退化为死循环的语料进入训练）
+    for punct in ["。", ".", "!", "?", "\n"]:
+        if output.count(punct * 5) > 0:
+            return False
+            
+    # 过滤明显的套话模板残留
+    dirty_phrases = ["作为一个AI", "作为一个人工智能模型", "我无法访问互联网实时信息"]
+    for phrase in dirty_phrases:
+        if phrase in output and len(output) < 60:
+            return False
+            
+    return True
 
-LLM 数据扩增有四种核心方法，尤其适用于角色扮演场景。第一种基于 Prompt 的数据生成：输入「生成一段医生和病人之间的对话，医生性格温和，病人有些焦虑」，LLM 直接输出符合角色设定的对话。第二种对话扩展：把单轮「用户：我今天感觉不太舒服」扩成多轮，加入压力源（工作压力大、熬夜）、具体症状（头晕、恶心）、个性化建议（作息调整、冥想），可达 5 轮以上。第三种场景变换：把咖啡店对话改写为餐厅、书店等其他场景，保留对话结构但替换实体（「这里的咖啡真不错」→「这里的牛排真不错」）。第四种风格转换：把正式风格（「我建议您可以考虑阅读 Stuart Russell 和 Peter Norvig 合著的《人工智能：一种现代方法》」）改写为轻松风格（「哇，说到 AI 的好书，我立马想到一本超赞的！」）。这四种方法可以结合 Dify workflow 串联成自动化流水线。
+def get_simhash_signature(text: str, num_bits: int = 64) -> int:
+    """
+    生成 64 位 SimHash 二进制局部敏感哈希指纹
+    同时支持英文单词与中文 2-gram 切分
+    """
+    # 提取连续英文单词与中文字符
+    words = re.findall(r'[a-zA-Z0-9]+|[一-龥]', text.lower())
+    if not words:
+        return 0
+    
+    # 生成简易 n-gram 词袋
+    tokens = []
+    for i in range(len(words)):
+        tokens.append(words[i])
+        if i < len(words) - 1:
+            tokens.append(f"{words[i]}_{words[i+1]}")
+            
+    v = [0] * num_bits
+    for token in tokens:
+        # 取 MD5 前 16 位字符作为 64 位整型哈希
+        h = int(hashlib.md5(token.encode('utf-8')).hexdigest()[:16], 16)
+        for i in range(num_bits):
+            bit = (h >> i) & 1
+            v[i] += 1 if bit else -1
+            
+    fingerprint = 0
+    for i in range(num_bits):
+        if v[i] > 0:
+            fingerprint |= (1 << i)
+    return fingerprint
 
+def hamming_distance(sig1: int, sig2: int) -> int:
+    """计算两个指纹之间的汉明距离"""
+    return bin(sig1 ^ sig2).count('1')
 
-### 🔴 带 Function calling 的微调数据应该怎么构造？给一个具体格式示例。
+def clean_and_deduplicate_dataset(raw_dataset: List[Dict[str, str]], 
+                                   simhash_threshold: int = 3) -> List[Dict[str, str]]:
+    """
+    执行整套清洗和去重流程
+    """
+    cleaned_samples: List[Dict[str, str]] = []
+    seen_signatures: List[int] = []
+    
+    for item in raw_dataset:
+        inst = clean_text_heuristics(item.get("instruction", ""))
+        inp = clean_text_heuristics(item.get("input", ""))
+        out = clean_text_heuristics(item.get("output", ""))
+        
+        if not is_valid_sample(inst, out):
+            continue
+            
+        # 需拼接 instruction 与 input，防止同指令不同输入的有效样本被误删
+        dedup_text = f"{inst}\n{inp}".strip() if inp else inst
+        sig = get_simhash_signature(dedup_text)
+        is_duplicate = False
+        
+        for exist_sig in seen_signatures:
+            if hamming_distance(sig, exist_sig) <= simhash_threshold:
+                is_duplicate = True
+                break
+                
+        if not is_duplicate:
+            seen_signatures.append(sig)
+            sample = {"instruction": inst, "output": out}
+            if inp:
+                sample["input"] = inp
+            cleaned_samples.append(sample)
+            
+    return cleaned_samples
+```
 
-**回答要点**：
+关于机器学习与特征工程的基础概念，可参考 [/fundamentals/ml-basics/data-features-labels.md](/fundamentals/ml-basics/data-features-labels.md)。
 
-带 Function calling 的微调数据必须在 system 段嵌入 tool_schema，并在 assistant 回复中输出 tool_call。tool_schema 是描述工具的 JSON Schema，例如 get_weather 函数：`{name, description, parameters: {type: object, properties: {location: {type: string, description}}, required: [location]}}`。构造流程分三步：第一步在 conversations 的 system 字段写「你是一名助人为乐的助手，当用户查询天气时，请调用 get_weather 函数」；第二步在 system 段后追加 `# Tools you may call one or more functions... <tools>{tool_schema JSON}</tools> For each function call, return a json object...<tool_call>`；第三步 assistant 回复用 `<tool_call>{"name": "get_weather", "arguments": {"location": "北京"}}</tool_call>` 包裹 JSON。如果还要保留 Qwen3 的混合推理能力，需要在 assistant 段前置 `<think>...` 包夹 reasoning_content。踩坑点：tool_schema 漏写或错一个字段，模型调用准确率断崖式下跌；token 增长约 500-2000 tokens / 条（含工具描述）。
+---
 
+### 负例设计与安全拒答的配比
 
-### 🔴 如何设计一个完整的微调数据质量控制体系？包含哪些维度、哪些方法、哪些工具？
+在很多业务场景中，当输入缺少必要前置条件或涉及恶意注入时，模型不应生硬瞎猜，而应主动指出缺陷或给出规范拒绝。
 
-**回答要点**：
+![安全拒答样本配比的天平平衡尺度示意图](/images/content-rebuild/0e2f9731bc5dcc71/fig-6.png)
 
-微调数据质量控制体系应分三层。第一层是清洗层，解决六类问题：PII 匿名化（正则匹配 O(n×m)，m=5-20）、拼写纠错、HTML/URL 清洗、广告过滤、去重、连贯性检查，工具用 Python 正则 + pandas。第二层是评估层，三维度并行：去重维度（MinHash / SimHash 查近似重复）、质量维度（启发式规则 + LLM 评分过滤低质量对话）、合规维度（关键词黑名单 + 人工抽检）。第三层是验证层，四方法闭环：随机抽样人工审核（建议 1-5% 抽样率）、统计分析（`df.describe()` + 长度分布直方图 + 词频 Counter）、小规模测试微调（1000-5000 条样本先训一版看 Loss 曲线）、交叉验证（不同子集多次微调对比结果一致性，波动超过 5% 报警）。工具链：Dify workflow 串流程、Llama_factory 做格式转换、CAMEL 数据集做对照基线。数据量经验值：基础指令 1k-10k、角色扮演 5w-30w、单工具 Function calling 500-2000、多工具组合 1w+。
+如上图所示，负例样本在训练集中需要保持合理的配比，避免产生过度拒答。
 
+#### 1. 负例样本的核心应用场景
+1. **前置条件缺失时的诚实回应**：当给定的表结构中根本没有查询所用的字段时，模型应指出“缺少相关字段的类型与索引信息，无法给出优化方案”，而不是随机编造索引名。
+2. **指令注入防范与安全边界**：面对提示词注入（Prompt Injection，试图利用用户输入强行覆盖既定系统角色指令）或违规越狱提问，模型应中立且清晰地拒绝执行违规操作。
+
+#### 2. 过度拒答的形成原因与控制建议
+如果训练集中塞入过多形式单一的机械拒答语（如成千上万条“抱歉，我无法回答该问题”），模型在梯度更新中容易将敏感词（如“攻击”、“漏洞”、“慢查询”）与拒绝输出直接强关联。这会导致用户询问正规技术防护（如“怎样排查 SQL 慢查询漏洞？”）时，模型也直接触发拒答，破坏了系统的可用性。
+
+**工程建议**：
+- **控制配比**：在常规指令微调任务中，拒答与安全样本占比通常建议维持在 **1% 到 5%** 之间。
+- **说明原因而非直接拒绝**：拒答样本必须交代“为什么无法回答”以及“还需要补充什么条件”，避免模型沦为机械的复读机。
+
+---
+
+### 课后动手练习
+
+**目标**：编写一个多轮对话数据校验函数 `validate_chat_messages(messages: list) -> tuple[bool, str]`，验证一组 ChatML 格式的对话记录是否可以直接交付训练。
+
+**输入与验证规则**：
+1. 整个列表必须非空。
+2. 若包含 `role: "system"`，该消息必须且仅能出现在首位（索引 0）。
+3. 消息角色必须满足严格交替：剔除开头的 `system` 之后，发言序列必须严格按照 `user -> assistant -> user -> assistant` 依次递进，且最后一条消息的角色必须是 `assistant`（训练时需要目标输出）。
+4. 每一条消息的 `content` 不能为空字符串或纯空格。
+
+**可直接运行的检验代码**：
+
+```python
+def validate_chat_messages(messages: list) -> tuple[bool, str]:
+    if not messages:
+        return False, "消息列表为空"
+        
+    # 检查 system 角色位置
+    for idx, msg in enumerate(messages):
+        if msg.get("role") == "system" and idx != 0:
+            return False, "system 角色只能出现在首位"
+            
+    start_idx = 1 if messages[0].get("role") == "system" else 0
+    dialogue = messages[start_idx:]
+    
+    if not dialogue:
+        return False, "缺少有效的问答轮次"
+    if dialogue[-1].get("role") != "assistant":
+        return False, "最后一轮必须是 assistant 的回复"
+        
+    expected_role = "user"
+    for msg in dialogue:
+        role = msg.get("role")
+        content = msg.get("content", "").strip()
+        
+        if not content:
+            return False, f"角色 {role} 的发言内容不能为空"
+        if role != expected_role:
+            return False, f"角色交替错误：期望 {expected_role}，实际收到 {role}"
+            
+        expected_role = "assistant" if expected_role == "user" else "user"
+        
+    return True, "校验通过"
+
+# 验证用例
+valid_sample = [
+    {"role": "system", "content": "你是助手"},
+    {"role": "user", "content": "怎么查慢日志？"},
+    {"role": "assistant", "content": "开启 slow_query_log 即可。"}
+]
+
+invalid_sample = [
+    {"role": "user", "content": "第一问"},
+    {"role": "user", "content": "第二问"}  # 连续 user 角色
+]
+
+assert validate_chat_messages(valid_sample)[0] is True
+assert validate_chat_messages(invalid_sample)[0] is False
+print("所有校验逻辑测试通过！")
+```
+
+当数据准备完毕并通过格式校验后，下一步便是将序列加载到训练器中进行前向传播与梯度更新。关于标签掩码（Label Masking）与参数微调的具体计算方式，请前往下一讲：[/llm-100/finetuning/sft-instruction-tuning.md](/llm-100/finetuning/sft-instruction-tuning.md)。

@@ -1,183 +1,193 @@
 ---
-title: chatGLM 和 GPT 在结构上有什么区别？
+title: ChatGLM 和 GPT 在网络架构上有什么区别？
 icon: mdi:compare
 tag:
-  - ChatGLM
-  - GPT
-  - 架构对比
+- ChatGLM
+- GPT
+- 架构对比
+description: 对比初代 ChatGLM 与 GPT 在注意力掩码、2D 位置编码及 KV Cache 上的机制差异，并分析后续版本为何回归单向因果架构。
 ---
 
-# chatGLM 和 GPT 在结构上有什么区别？
+![ChatGLM 与 GPT 架构差异概览](/images/content-rebuild/aff9f07fa83ff4aa/cover.png)
 
-这道题考的是 **GLM 架构和 Decoder-Only 架构**在设计理念上的本质区别。面试官想看你能不能说清楚两种架构背后的工程哲学，以及为什么 ChatGLM 要走"混血"路线，后来又转向"纯血"。
-
-我分五个方面来讲：**架构出身**、**ChatGLM2 的演进**、**位置编码与归一化**、**注意力效率优化**、**预训练策略**。
+在生成式语言模型的发展过程中，GPT 系列从始至终坚持纯单向因果架构，而 ChatGLM 初代则基于混合掩码自回归（GLM 架构）设计。两者最核心的区别在于注意力掩码（Attention Mask）的组织方式和位置编码的维度。理解这些设计差异，能够帮助开发者看懂大模型在预训练目标、位置表征以及推理服务算子适配上的具体权衡。
 
 ---
-## 一、架构设计的"出身"不同
 
-先说本质区别。
+## 面试 30 秒口述答案
 
-**GPT 是纯种 Decoder-Only**。它只做一件事：单向自回归生成。看前面所有 token，预测下一个 token。这就是它的全部逻辑。BERT 出来的时候 GPT 还没火，但 GPT-2、GPT-3 证明了纯Decoder-Only 路线能把生成能力做到极致。
+如果面试官询问“ChatGLM 和 GPT 在网络架构上有什么区别”，可以用以下三点回答：
 
-**ChatGLM 是 GLM 架构**，一个"混血"设计。它想把两件事统一起来：
-- NLU（自然语言理解）：BERT 那种双向看上下文的任务
-- NLG（自然语言生成）：GPT 那种单向生成的任务
-
-怎么统一的？**自回归式完型填空**。
-
-原来 BERT 做 MLM（掩码语言模型），随机遮几个词然后预测。GPT 做自回归，从左往右一个一个预测。
-
-GLM 的做法是：**随机遮一段连续的 span，然后从左往右自回归地填出来**。
-
-这样它同时具备：
-- 双向注意力（看被遮部分两边的内容）
-- 单向生成能力（填的时候只能看左边）
-
-类比一下：
-
-GPT 像一个**专业作家**，只会从头写到尾，但写得极其流畅。
-
-GLM 像一个**全能选手**，既能做阅读理解题（双向看全文），又能写作文（单向生成）。
-
-这就导致了第一个关键差异：**任务统一性 vs 生成专注度**。GLM 追求一专多能，GPT 追求生成能力的极致。
+1. **自注意力机制与任务形式**：GPT 是标准的自左向右单向因果模型（Causal Decoder-only），整段输入使用下三角掩码；初代 ChatGLM（以及 ChatGLM-6B）采用自回归空白填充架构，输入分为未被遮蔽的前缀（Part A）和待生成的遮蔽片段（Part B），Part A 内部采用双向全连接注意力，Part B 内部采用单向因果自回归。
+2. **位置编码体系**：GPT 采用一维递增位置编码（早期的绝对位置嵌入，现代架构如 GPT-4 路线多采用 RoPE）；初代 ChatGLM 为了让后置生成的片段能准确填补原句缺失位置，设计了 **2D 旋转位置编码（2D RoPE）**，分别记录原句绝对位置与片段内部自回归步长。
+3. **架构演化路线**：从 ChatGLM2 开始，后续的 GLM-3 与 GLM-4 均已**彻底放弃双向掩码与 2D 位置编码，回归标准的单向因果 Decoder-only 架构**。这一转变主要是为了直接兼容 FlashAttention、PagedAttention 等行业主流高性能算子，降低高并发多轮对话下的前缀缓存管理成本。
 
 ---
+
+## 贯穿例子：4 个 Token 的完形填空任务
+
+为了直观理解这两种架构的不同，我们使用一个包含 4 个 Token 的简单句子作为贯穿示例：
+
+假设原始句子切分为 4 个词：`[x1, x2, x3, x4]`。此时任务要求模型把被遮蔽的 `x3` 预测出来。
+
+- **GPT 的处理流程**：只能按顺序从左往右看。如果要让 GPT 填补中间词，通常需要构造提示词（如“输入 x1 x2 [空] x4，输出是：”），模型按因果顺序逐字计算，每个位置都看不到后面的词。
+- **初代 ChatGLM 的处理流程**：将原始句子拆分成两部分：
+  - **Part A（前缀上下文）**：`t1=[x1], t2=[x2], t3=[MASK], t4=[x4]`。原句中的 `x3` 被替换为占位标记 `[MASK]`。
+  - **Part B（待生成内容）**：`t5=[SOP], t6=[x3]`。以特定起始标记 `[SOP]`（Start of Prefix）开头，接着是要预测的真实 Token `x3`。
+
+![自回归空白填充任务分解流程](/images/content-rebuild/aff9f07fa83ff4aa/fig-1.png)
+
+---
+
+## 预训练任务与注意力掩码矩阵对比
+
+掩码矩阵决定了模型计算自注意力时，哪些位置之间允许传递信息。
+
+### 1. GPT 的严格因果掩码
+
+在标准因果自回归模型中，序列中第 $i$ 个 Token 只能依赖小于或等于 $i$ 的前文 Token。其注意力掩码矩阵 $M$ 为严格下三角结构：
+
+$$M_{ij} = \begin{cases} 0, & i \ge j \\ -\infty, & i < j \end{cases}$$
+
+在 Softmax 计算前，加在注意力打分矩阵上的掩码保证了后续词无法泄露给前文词。关于掩码算子的具体实现，可参考 [/interview/llm-interview/attention-masking.md](/interview/llm-interview/attention-masking.md)。
+
+### 2. 初代 ChatGLM 的混合掩码
+
+GLM 结合了 BERT 的双向语义理解与 GPT 的自回归生成能力，掩码矩阵由四块子区域组成：
+- **Part A 对 Part A**：完全互视（全 $0$ 掩码）。`x1`、`x2`、`[MASK]`、`x4` 彼此完全可见，保留完整的双向语境。
+- **Part A 对 Part B**：完全阻断（掩码为 $-\infty$）。前缀不能提前看到待恢复的真实内容。
+- **Part B 对 Part A**：完全可见（全 $0$ 掩码）。生成的每一个词都可以参考完整的未遮蔽上下文。
+- **Part B 对 Part B**：单向因果可见（下三角因果掩码）。自回归生成 Span 内部的 Token，后词不能泄露给前词。
+
+![GLM 混合 Mask 与 GPT 因果 Mask 结构对比](/images/content-rebuild/aff9f07fa83ff4aa/fig-2.png)
+
+### 3. 示例掩码矩阵数值展示
+
+将贯穿示例中的 6 个 Token（4 个 Part A Token + 2 个 Part B Token）展开为 $6 \times 6$ 的注意力掩码矩阵（$0$ 表示允许计算注意力，$\times$ 表示阻断）：
+
+$$
+M = \begin{pmatrix}
+0 & 0 & 0 & 0 & \times & \times \\
+0 & 0 & 0 & 0 & \times & \times \\
+0 & 0 & 0 & 0 & \times & \times \\
+0 & 0 & 0 & 0 & \times & \times \\
+0 & 0 & 0 & 0 & 0 & \times \\
+0 & 0 & 0 & 0 & 0 & 0
+\end{pmatrix}
+$$
+
+左上角 $4 \times 4$ 为全通双向区域，右下角 $2 \times 2$ 为严格因果下三角区域。这就是 GLM 所谓的双向掩码自回归。
+
+---
+
 <ReadMoreLock />
 
-## 二、从"混血"到"纯血"——ChatGLM2 的架构演进
+## 位置编码设计：2D 编码与 1D 编码
 
-这里有个重要的演进细节，面试经常被问。
+输入掩码打破了纯线性顺序后，一维递增位置编码无法满足需求，这是理解初代 ChatGLM 的重点。
 
-**ChatGLM 初代**其实是 **Prefix-LM 混合架构**。不是纯 GLM，也不是纯 Decoder-Only。它在想同时利用双向和单向注意力的地方用了双向，在纯生成的地方用单向。
+![GLM 2D 位置编码与 GPT 1D 编码映射解析](/images/content-rebuild/aff9f07fa83ff4aa/fig-3.png)
 
-这带来了一个问题：**工程实现复杂，推理效率低**。
+### 1. 为什么初代 ChatGLM 需要 2D 位置编码？
 
-Prefix-LM 需要你在推理时对 prefix 部分使用双向注意力，对生成部分切换到单向。这不是自然的任务切换，需要复杂的工程支持。
+在上述例子中，待恢复的 Token `x3` 物理上被移到了整个输入的末尾（作为 `t6` 传入）。如果直接使用标准一维递增编码 $[0, 1, 2, 3, 4, 5]$：
+- 模型只能知道 `x3` 是输入里的第 6 个词，无法直接感知到它填补的是第 2 位（`[MASK]` 所在位置）的空缺；
+- 如果一句话里挖出了多个不同的 Span（例如同时遮蔽 `x2` 和 `x4`），被抽出的片段可能以任意顺序排列，一维编码彻底丢失了它们与原始句子的物理对应关系。
 
-**ChatGLM2 直接转向了 Decoder-Only**。
+为了解决这个问题，初代 ChatGLM 设计了两个维度的一维位置坐标：
+- **Position 1（全局位置）**：记录当前 Token 在原始完整句子中的真实位置。对于 Part B 中生成的 Token，其 Position 1 统一固定为它在原句中所替换的 `[MASK]` 所在的位置。
+- **Position 2（局部步长）**：记录当前 Token 在待恢复片段内部的相对生成顺序。对于 Part A 中的所有 Token，该值固定为 $0$；对于 Part B 中的 Token，从 $1$ 开始线性递增。
 
-这带来了两个显著提升：
-- **推理速度提升 42%**：不需要在双向和单向之间切换
-- **更长上下文支持**：Decoder-Only 的 KV cache 管理更简单
+回到贯穿示例，每个 Token 分配的 2D 位置坐标如下：
 
-这背后是一个工程权衡：**架构统一性 vs 任务灵活性**。
+| Token 标识 | 角色属性 | 文本内容 | Position 1 (原句位置) | Position 2 (片段内步长) |
+| :--- | :--- | :--- | :--- | :--- |
+| `t1` | Part A | `x1` | 0 | 0 |
+| `t2` | Part A | `x2` | 1 | 0 |
+| `t3` | Part A | `[MASK]` | 2 | 0 |
+| `t4` | Part A | `x4` | 3 | 0 |
+| `t5` | Part B | `[SOP]` | 2 | 1 |
+| `t6` | Part B | `x3` | 2 | 2 |
 
-ChatGLM2 选择了前者。它承认：为了效率和工程简洁，可以放弃一部分 NLU 任务上的优势。GLM 架构的核心理念（完型填空统一多任务）可以通过预训练任务设计来实现，而不一定需要在注意力机制层面硬编码双向能力。
+在底层实现上，ChatGLM-6B 将 Rotary Position Embedding（RoPE）的隐藏层通道维度一分为二：前一半通道应用基于 Position 1 计算的旋转矩阵，后一半通道应用基于 Position 2 计算的旋转矩阵。关于 RoPE 旋转矩阵的推导细节，请阅读 [/interview/llm-interview/llama-rope.md](/interview/llm-interview/llama-rope.md)。
 
-类比一下：像一个产品从"多功能复杂接口"优化为"单一专用接口"。功能少了，但效率高了，稳定性也好了。
+### 2. GPT 的一维位置编码
 
----
-
-## 三、藏在细节里的差距——位置编码与归一化
-
-说完成整架构，再看两个具体的技术差异。
-
-### RoPE 旋转位置编码
-
-这是 ChatGLM 的一个重要选择。
-
-传统的位置编码（Sinusoidal、Learned）是把位置信息**加**到 token embedding 上。这种方式在处理长序列时效果不好，因为位置信息会衰减。
-
-**RoPE**（Rotary Position Embedding）换了个思路：不是加，是**旋转**。它把位置信息编码成旋转变换，应用到 query 和 key 上。
-
-核心原理：两个 token 的注意力分数，只跟它们的**相对位置**有关，跟绝对位置无关。RoPE 通过旋转矩阵实现了这个性质。
-
-类比一下：RoPE 像给每个 token 的位置装了一个**指南针**。不管序列多长，两个 token 之间的"方向"（相对位置）始终清晰。
-
-GPT-4 出来的时候，有人猜测它用了 RoPE。后来 OpenAI 没公开，但国内很多大模型都用 RoPE 处理长上下文。ChatGLM 的 32K、128K 上下文能力，跟 RoPE 有直接关系。
-
-### DeepNorm 归一化
-
-训练大模型最怕的就是**梯度爆炸或消失**。特别是在层数很深的时候。
-
-传统方案是 **Pre-LN**（Layer Norm 在 Attention 之前）。它稳定，但限制了模型表达能力。
-
-**DeepNorm** 是微软提出的新方案，在 Post-LN 的基础上加了一个**归一化操作**，让梯度更稳定。它比 Pre-LN 更容易训练出好的深层模型。
-
-ChatGLM 使用 DeepNorm，配合 62 层的设计，实现了稳定的长上下文训练。
+GPT 序列严格线性向前，Token 之间的相对距离完全由一维自然数递增表达：
+- GPT-2 / GPT-3 使用可学习的一维绝对位置嵌入（Learned Absolute Positional Embeddings）；
+- 现代因果模型（如 GPT-4 风格开源变体、LLaMA 系列）则全面采用一维 RoPE。
 
 ---
 
-## 四、效率优化——Multi-Query Attention 的秘密
+## 推理阶段与 KV Cache 的行为差异
 
-说一个让 ChatGLM2 推理更快的关键优化。
+在生产部署与高并发服务中，混合掩码与单向因果掩码对推理阶段的 [/interview/llm-interview/kv-cache.md](/interview/llm-interview/kv-cache.md) 会产生不同影响。
 
-**传统 Multi-Head Attention（MHA）**：每个 head 有独立的 Q、K、V。这意味着 KV cache 很大——每个 head 都要存自己的 K 和 V。
+![双向 Prefill 与单向因果对 KV Cache 读写流向的影响](/images/content-rebuild/aff9f07fa83ff4aa/fig-4.png)
 
-**Multi-Query Attention（MQA）**：所有 head 共享同一套 K 和 V。Query 还是分头的，但 K 和 V 只保存一份。
+### 1. Prefill 与 Decode 阶段的计算行为
 
-好处是什么？
+大模型推理通常分为预填充（Prefill，计算 Prompt 内部表示）与解码（Decode，逐步自回归生成后续 Token）两个阶段：
 
-推理时，KV cache 的大小**大幅减少**。原来要存 40 套 K 和 V，现在只要 1 套。
+- **GPT 体系（标准因果 Decoder-only）**：
+  - Prefill 阶段：因果掩码下，第 $i$ 个 Token 的 Key 和 Value 只依赖前文，产生对应长度的 Key 和 Value 向量顺序存入 KV Cache。
+  - Decode 阶段：每生成一个新 Token，单向检索已有 Cache，并将当前位置生成的单个 Key/Value 向量追加到 Cache 末尾。
+- **初代 ChatGLM（双向前缀）**：
+  - Prefill 阶段：Part A 内部双向可见，所有前缀 Token 之间互相交互一次性完成状态提取，写入 Cache。
+  - Decode 阶段：Part B 逐步生成，新 Token 检索 Part A 的全量 Cache 与 Part B 已生成的 Cache，并向后追加写入。
 
-类比一下：
+### 2. 算子优化与工程复用挑战
 
-MHA 像**多人分工查字典**——每个人都要翻一遍字典，找到自己的信息。
+双向前缀看似提升了语境表达，却在实际推理部署中带来了两处明显的工程瓶颈：
 
-MQA 像**一个人查多本字典**——一个人翻字典，其他人等着用结果。
-
-ChatGLM2 使用 MQA 配合 **FlashAttention** 优化，在长上下文推理时，显存占用和计算速度都有明显提升。
-
-GPT 其实也在用类似优化。LLaMA 也用了 MQA。但 ChatGLM2 在这个方向上做得比较彻底。
-
----
-
-## 五、预训练策略的"中式智慧"
-
-最后说一个容易被忽视的差异：**预训练策略**。
-
-### ChatGLM 的双语训练
-
-GPT 训练数据以英文为主，英文语料占比超过 90%。
-
-ChatGLM 的做法是**中英 1:1 配比**。这让它在中文理解上天然有优势。
-
-这不是简单的"中文语料多"的问题，而是**训练时的语言平衡**。中英 1:1 意味着模型在训练时不会偏向任何一种语言，两种语言的"语感"都得到充分训练。
-
-类比一下：像一个孩子从小接受双语浸入式教育，两种语言的表达都很自然。不像有些模型，中文像是"翻译"过来的。
-
-### MIP 多任务指令预训练
-
-ChatGLM 在指令微调之前，先做了 **MIP（Multi-Task Instruction Pre-training）**。
-
-普通 SFT（监督微调）是在预训练后直接做指令对齐。MIP 的做法是：**在海量任务上做预训练**，让模型先见过各种任务的形态，再做对齐微调。
-
-这相当于让学生**先做各科习题集，再做考前模拟**。基础更扎实，泛化能力更强。
-
-### RLHF 对齐
-
-ChatGLM 的对齐阶段用了 **SFT + RLHF（人类反馈强化学习）**。
-
-GPT-3.5 之后也用 RLHF。但 ChatGLM 在 RLHF 中针对中文场景做了更多优化，比如中文偏好数据的收集和标注。
+1. **通用注意力内核适配成本高**：FlashAttention 主要是通过分块与核函数融合减少高带宽显存（HBM）的读写访存开销，并不改变注意力机制本身的二次复杂度计算量。它的标准硬件融合实现高度依赖单向因果下三角结构进行块级别的跳过。混合掩码由于存在局部的双向全连接与阻断，无法直接套用标准因果内核，往往需要编写专用算子，或者回退到通用掩码逻辑，降低了 GPU 吞吐效率。
+2. **多轮对话前缀复用受限（Prefix Caching）**：在现代在线服务中，多个请求可能共享同一段系统提示词（System Prompt）。在纯单向因果模型中，每个 Token 的 Key 和 Value 仅取决于它前面的词，向后追加新内容不会改变前面已生成的表示，因此公共前缀的 KV Cache 可以被多个会话跨请求安全共享或跳过计算。而如果前缀内部采用双向依赖，任何在上下文中的改动或追加，都会导致双向交互区内所有 Token 的 Key 和 Value 发生改变，无法直接进行公共前缀缓存的跨请求复用与增量追加。
 
 ---
 
-## 面试怎么答
+## 架构演化路线：GLM 为什么全面回归 Causal Decoder-only？
 
-### 基础版（直接背）
+从技术演化看，智谱 AI 团队在推出 ChatGLM-6B 之后，从 ChatGLM2 开始逐步精简架构，后续的 GLM-3 与 GLM-4 完全转向标准的 Causal Decoder-only 方案。
 
-> ChatGLM 和 GPT 的核心区别在于架构设计理念。ChatGLM 采用 GLM 架构，通过自回归式完型填空统一 NLU 和 NLG 任务，在注意力机制上融合双向和单向。GPT 是纯 Decoder-Only 单向自回归架构，专注生成能力极致化。ChatGLM2 已经转向 Decoder-Only 以提升推理效率。技术细节上，ChatGLM 使用 RoPE 旋转位置编码支持长上下文，DeepNorm 归一化保证深层训练稳定，Multi-Query Attention 优化推理效率。预训练策略上，ChatGLM 采用中英 1:1 双语训练和多任务指令预训练，针对中文场景做了专门优化。
+![ChatGLM 体系向 Causal Decoder-only 收敛演化路线](/images/content-rebuild/aff9f07fa83ff4aa/fig-5.png)
 
-### 加分版（加这些）
+### 1. ChatGLM 系列演进轨迹横向对比
 
-> 如果从设计哲学层面说：GLM 追求"统一多任务"，想用一套架构解决所有 NLP 问题；GPT 追求"极致单点能力"，把生成这件事做到极致。
->
-> 架构演进也值得关注。ChatGLM 初代是 Prefix-LM 混合架构，工程复杂。ChatGLM2 转向 Decoder-Only 是务实选择——用训练任务设计保证能力，架构层面简化以提升效率。
->
-> 实际选型时，如果你的业务场景以英文为主、追求生成质量，GPT 路线更合适。如果涉及大量中英混合对话、长文档处理，ChatGLM 的架构选择更有优势。
+| 版本 | 基础架构形式 | 注意力掩码形态 | 位置编码方案 | 注意力头结构 | 归一化策略 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **ChatGLM-6B (一代)** | Prefix-LM 混合架构 | Part A 双向 + Part B 因果 | 2D RoPE 空间位置编码 | Multi-Head Attention (MHA) | DeepNorm (Post-LN 变体) |
+| **ChatGLM2-6B** | Causal Decoder-only | 纯单向因果下三角 | 1D RoPE | Multi-Query Attention (MQA) | RMSNorm (Pre-LN) |
+| **ChatGLM3 / GLM-4** | Causal Decoder-only | 纯单向因果下三角 | 1D RoPE（支持长外推） | Grouped-Query Attention (GQA) | RMSNorm + SwiGLU |
+
+关于 MQA 与 GQA 显存节省机制的横向对比，可参见 [/interview/llm-interview/mha-mqa-gqa.md](/interview/llm-interview/mha-mqa-gqa.md)。关于 Decoder-only 成为行业主流的技术原因，可参见 [/interview/llm-interview/decoder-only.md](/interview/llm-interview/decoder-only.md)。
+
+### 2. 促成这一技术收敛的三个核心考量
+
+1. **预训练数据规模摊平了结构收益**：GLM 最初引入双向掩码填空是为了增强自然语言理解（NLU）表现。但在百亿、千亿参数及数万亿 Token 的训练规模下，纯单向自回归模型在各种理解类基准上的表现已完全不输混合架构，双向掩码带来的先验收益被大规模自回归预训练摊薄。
+2. **主流推理生态的协同标准**：vLLM、TensorRT-LLM、SGLang 等高性能推理框架，核心调度和算子（如 PagedAttention）全部针对标准 Causal Decoder-only 深度优化。使用非标准掩码意味着需要为每个新算子定制分支，开发维护成本过高。
+3. **训练架构的简化**：标准因果掩码配合 1D RoPE 让模型的数据流和流水线并行切分更加标准化，能无缝接入 Megatron-LM 等通用大规模训练框架。
+
+![非标准 Mask 与定制算子在分布式高并发下的失败链路分析](/images/content-rebuild/aff9f07fa83ff4aa/fig-6.png)
 
 ---
 
-## 一句话总结
+## 面试高频追问与常见认知陷阱
 
-**ChatGLM 是"混血统一"走向"务实纯血"，用 GLM 理念做预训练任务；GPT 是"专注生成"的纯 Decoder-Only 路线，两者背后是不同的工程哲学。**
+### 追问 1：GLM 架构究竟属于 Encoder-Decoder 还是 Decoder-only？
 
----
+**口述要点**：
+GLM 本身是一个**单堆栈（Single-stack）Decoder-only 的变体**，并不包含独立的两套参数（不像 T5 拥有独立的 Encoder 和 Decoder），也没有跨注意力层（Cross-Attention）。所有的 Token 都在同一个 Transformer 深度堆栈中流转，仅仅通过注意力掩码矩阵人为划分出了双向交互区（Part A）与因果生成区（Part B）。
 
-*配图建议（5张）：*
-1. *ChatGLM(GLM)与GPT(Decoder-Only)注意力机制对比示意图*
-2. *ChatGLM架构演进历程（Prefix-LM→Decoder-Only）流程图*
-3. *RoPE旋转位置编码原理示意图*
-4. *Multi-Query Attention与传统Multi-Head Attention对比图*
-5. *ChatGLM与GPT预训练策略差异对比表*
+### 追问 2：为什么 ChatGLM-6B 初代采用 DeepNorm 而非标准的 Pre-LN？
+
+**口述要点**：
+标准的 Post-LN 在深层网络中容易发生梯度爆炸或残差路径不稳定，而早期的 Pre-LN 虽然训练稳定，但有研究认为深层表示能力受到一定限制。ChatGLM-6B（以及早期的 GLM-130B）为了兼顾深层模型的训练稳定度与表达能力，采用了微软提出的 DeepNorm 方案。该方案通过对残差连接添加缩放系数并结合特定权重初始化，使得深层模型在稳定训练的同时抑制梯度溢出。到了 ChatGLM2 及后续版本，随着技术收敛，模型全面切换为更轻量且训练稳定的 RMSNorm（详细对比参见 [/interview/llm-interview/layernorm-rmsnorm.md](/interview/llm-interview/layernorm-rmsnorm.md)）。
+
+### 常见错误说法辨析
+
+- **错误说法 1：“ChatGLM 全系列模型都采用了 2D 位置编码与双向填空机制。”**
+  *事实纠正*：只有初代 GLM-130B 和 ChatGLM-6B 采用了 2D RoPE 与双向完型填空掩码。从 ChatGLM2 开始，智谱已彻底放弃双向掩码与 2D 编码，全面转向标准 1D RoPE 和单向因果 Decoder-only 架构。
+- **错误说法 2：“双向前缀模型可以像标准 GPT 一样直接做任意前缀的 KV Cache 共享复用。”**
+  *事实纠正*：双向前缀内部所有 Token 互相可见，其键值表示受前缀内全部上下文的联合影响。单向因果模型向后追加文本不改变历史 KV，因此公共系统提示可安全跨会话共享；而双向前缀只要内部内容变动或向后扩展双向区，整段前缀的 Key 和 Value 均会发生变动，无法安全跨请求共享或直接做增量前缀缓存。
+- **错误说法 3：“LLaMA 采用了与 ChatGLM2 相同的 Multi-Query Attention（MQA）机制。”**
+  *事实纠正*：ChatGLM2-6B 在开源模型中较早落地了 Multi-Query Attention（MQA，所有 Query 头共享 1 组 Key/Value 头）。而初代 LLaMA 全系与 LLaMA-2 7B/13B 均使用传统的 Multi-Head Attention（MHA，每个 Query 头拥有专属的 Key/Value 头），直到 LLaMA-2 70B 及后续版本才开始引入 Grouped-Query Attention（GQA）。

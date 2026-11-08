@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "enabled": true,
+  "logo": "src/.vuepress/public/images/branding/anyi-marker-logo.png",
+  "logo_version": "visual-construction-marker-v2",
+  "placement": {
+    "width_fraction": 0.12,
+    "margin_fraction": 0.012
+  },
+  "exclude": [
+    "branding/**",
+    "home-previews/**",
+    "wechat-qrcode.png"
+  ]
+}
