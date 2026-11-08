@@ -119,6 +119,7 @@ description: 对比编辑器插件、原生 AI IDE 与终端 Agent 三种形态�
 
 - **Aider**：[https://aider.chat/docs/](https://aider.chat/docs/)。专注于终端协作编程，利用 Git 仓库符号图（Repo Map）提供压缩代码结构，能自动生成符合约定的 Git Commit 消息。
 - **Claude Code**：[https://docs.anthropic.com/en/docs/claude-code/overview](https://docs.anthropic.com/en/docs/claude-code/overview)。Anthropic 推出的终端工程代理，支持递归文件检索、代码编辑、终端测试运行，并提供分级的敏感命令执行确认机制。
+- **agent-qa**：[https://vostride.com](https://vostride.com)。面向网页、Android 与 iOS 的开源应用验证工具，可通过 CLI、仪表盘或 MCP 执行自然语言测试并检查步骤与截图证据。memidex 持久记忆与可审查的自我改进可复用经验证的经验；需要 Node.js 24+，模型等服务可能收费，运行时采用 FSL-1.1-ALv2 许可证（[源码](https://github.com/vostride/agent-qa) · [编程智能体工作流](https://vostride.com/docs/agent-qa/guides/coding-agent-workflow)）。
 
 ---
 
